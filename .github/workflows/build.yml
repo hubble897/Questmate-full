@@ -1353,8 +1353,48 @@ jobs:
                       return h
               return None
 
+          def normalise_markup(page_html):
+              # BeautifulSoup must receive plain text/bytes only. Some MediaWiki
+              # responses use nested mapping objects, so unwrap them defensively.
+              if page_html is None:
+                  return ''
+              if isinstance(page_html, bytes):
+                  return page_html.decode('utf-8', errors='replace')
+              if isinstance(page_html, str):
+                  return page_html
+              if isinstance(page_html, dict):
+                  for key in ('*', 'html', 'text', 'body', 'content'):
+                      if key in page_html:
+                          value=normalise_markup(page_html.get(key))
+                          if isinstance(value, str) and value:
+                              return value
+                  return ''
+              if isinstance(page_html, (list, tuple)):
+                  parts=[]
+                  for value in page_html:
+                      value=normalise_markup(value)
+                      if isinstance(value, str) and value:
+                          parts.append(value)
+                  return ''.join(parts)
+              # Unknown objects are rejected rather than passed to BeautifulSoup.
+              return ''
+
+          def safe_soup(page_html):
+              markup=normalise_markup(page_html)
+              if not isinstance(markup, str) or not markup:
+                  return None
+              try:
+                  # html.parser avoids BeautifulSoup's XML-detection path that
+                  # caused KeyError: slice(None, 500, None) on CI.
+                  return BeautifulSoup(markup, 'html.parser')
+              except Exception as exc:
+                  print(f'Warning: HTML parser skipped malformed markup: {exc}')
+                  return None
+
           def parse_walkthrough(page_html):
-              soup=BeautifulSoup(page_html, 'lxml')
+              soup=safe_soup(page_html)
+              if soup is None:
+                  return []
               root=find_walkthrough_root(soup)
               if not root:
                   return []
@@ -1380,7 +1420,9 @@ jobs:
               return steps
 
           def parse_items(page_html):
-              soup=BeautifulSoup(page_html,'lxml')
+              soup=safe_soup(page_html)
+              if soup is None:
+                  return []
               # Prefer table row labelled Items required.
               for tr in soup.find_all('tr'):
                   cells=tr.find_all(['th','td'], recursive=False)
@@ -1404,7 +1446,10 @@ jobs:
                   if r.ok:
                       j=r.json()
                       if 'parse' in j and j['parse'].get('text'):
-                          return j['parse']['text'], 'OSRS Wiki quick guide'
+                          parsed=j['parse']['text']
+                          parsed=normalise_markup(parsed)
+                          if parsed:
+                              return parsed, 'OSRS Wiki quick guide'
               except Exception:
                   pass
 
@@ -1473,8 +1518,14 @@ jobs:
               page_html,source=fetch_wiki(title)
               steps=[]; items=[]
               if page_html:
-                  steps=parse_walkthrough(page_html)
-                  items=parse_items(page_html)
+                  try:
+                      steps=parse_walkthrough(page_html)
+                      items=parse_items(page_html)
+                  except Exception as exc:
+                      # One malformed or changed source page must never abort
+                      # the entire APK build. Fall back to embedded Quest Helper data.
+                      print(f'Warning: could not parse {title}: {exc}')
+                      steps=[]; items=[]
               if len(steps)>=2:
                   q['steps']=steps
                   q['sourceNote']=f'Guide text compiled at build time from {source}, cross-checked with Quest Helper seed data.'
@@ -1508,7 +1559,16 @@ jobs:
           print(REPORT.read_text())
           PYEOF
 
-          python3 /tmp/enrich_quests.py
+          if ! python3 /tmp/enrich_quests.py; then
+            echo 'WARNING: live guide enrichment failed; using embedded verified Quest Helper seed database instead.'
+            cp questmate-complete/app/src/main/assets/quests_seed.json questmate-complete/app/src/main/assets/quests.json
+            cat > questmate-complete/guide-build-report.txt <<'REPORT'
+          QuestMate guide build report
+          Live source enrichment failed safely during CI.
+          The APK was built using the embedded Quest Helper seed database and manual quest corrections.
+          No external wiki links are required by the app.
+          REPORT
+          fi
           rm questmate-complete/app/src/main/assets/quests_seed.json
 
           cat > questmate-complete/app/src/main/java/com/questmate/complete/MainActivity.java <<'EOF'
