@@ -1,4 +1,4 @@
-name: Build QuestMate Complete - Full Quest Guide Overhaul
+name: Build QuestMate Complete - All Quest Detailed Guides v11
 
 on:
   workflow_dispatch:
@@ -86,7 +86,7 @@ jobs:
                   minSdk 26
                   targetSdk 35
                   versionCode 9
-                  versionName '10.0-black-knights-rewards-fix'
+                  versionName '11.0-all-quest-detail-audit'
               }
           }
           EOF
@@ -1308,7 +1308,7 @@ jobs:
           OUT = Path('questmate-complete/app/src/main/assets/quests.json')
           REPORT = Path('questmate-complete/guide-build-report.txt')
           AUDIT = Path('questmate-complete/guide-audit.csv')
-          QH_ROOT = Path('/tmp/quest-helper/src/main/java/com/questhelper/quests')
+          QH_ROOT = Path('/tmp/quest-helper/src/main/java/com/questhelper/helpers/quests')
 
           session = requests.Session()
           session.headers.update({
@@ -1498,36 +1498,103 @@ jobs:
               if len(steps)==1 and len(text)<120: score-=50
               return score
 
-          def qh_steps(title):
+          def java_unescape(raw):
+              try:
+                  return bytes(raw, 'utf-8').decode('unicode_escape')
+              except Exception:
+                  return raw
+
+          def split_java_statements(text):
+              """Split Java source into semicolon-terminated statements without breaking inside quoted strings."""
+              out=[]; buf=[]; in_str=False; esc=False
+              for ch in text:
+                  buf.append(ch)
+                  if in_str:
+                      if esc:
+                          esc=False
+                      elif ch=='\\':
+                          esc=True
+                      elif ch=='"':
+                          in_str=False
+                  else:
+                      if ch=='"':
+                          in_str=True
+                      elif ch==';':
+                          out.append(''.join(buf)); buf=[]
+              if buf:
+                  out.append(''.join(buf))
+              return out
+
+          def qh_candidates(title):
               if not QH_ROOT.exists(): return []
               norm=lambda x: re.sub(r'[^a-z0-9]','',x.lower())
               target=norm(title)
-              candidates=[]
-              for p in QH_ROOT.rglob('*.java'):
-                  key=norm(str(p.relative_to(QH_ROOT)))
-                  if target and (target in key or key.endswith(target+'java')):
-                      candidates.append(p)
-              if not candidates:
-                  # relaxed token match for names whose punctuation/plural differs.
-                  words=[w for w in re.findall(r'[a-z0-9]+',title.lower()) if len(w)>2]
-                  for p in QH_ROOT.rglob('*.java'):
-                      low=str(p).lower()
-                      if words and sum(w in low for w in words)>=max(1,len(words)-1): candidates.append(p)
-              out=[]
-              string_re=re.compile(r'"((?:\\.|[^"\\]){8,})"')
-              for p in candidates[:8]:
+              all_files=list(QH_ROOT.rglob('*.java'))
+              scored=[]
+              words=[w for w in re.findall(r'[a-z0-9]+',title.lower()) if len(w)>2 and w not in ('the','and','of','a','an')]
+              for p in all_files:
+                  rel=norm(str(p.relative_to(QH_ROOT)))
+                  stem=norm(p.stem)
+                  score=0
+                  if target and stem==target: score+=100
+                  if target and target in rel: score+=60
+                  score += 10*sum(w in str(p).lower() for w in words)
+                  if score: scored.append((score,p))
+              scored.sort(key=lambda x:(-x[0],len(str(x[1]))))
+              return [p for _,p in scored[:12]]
+
+          def qh_steps(title):
+              """Extract actual RuneLite Quest Helper step constructor text, in source order."""
+              out=[]; seen=set()
+              step_ctor=re.compile(r'new\s+[A-Za-z0-9_]*(?:Quest)?Step\s*\(', re.I)
+              string_re=re.compile(r'"((?:\\.|[^"\\])*)"')
+              for p in qh_candidates(title):
                   try: text=p.read_text(encoding='utf-8',errors='ignore')
                   except Exception: continue
-                  for m in string_re.finditer(text):
-                      raw=m.group(1)
-                      try: t=bytes(raw,'utf-8').decode('unicode_escape')
-                      except Exception: t=raw
-                      t=clean(t)
-                      if 18<=len(t)<=500 and ACTION.search(t) and not BAD.search(t):
-                          if t.lower() not in {x['text'].lower() for x in out}:
-                              out.append({'section':'RuneLite Quest Helper','text':t})
-                  if len(out)>=6: break
-              return out[:80]
+                  # setupSteps is where the ordered quest instructions are declared.
+                  m=re.search(r'\b(?:public|protected)\s+void\s+setupSteps\s*\(\s*\)\s*\{', text)
+                  region=text[m.start():] if m else text
+                  for stmt in split_java_statements(region):
+                      if not step_ctor.search(stmt):
+                          continue
+                      strings=[clean(java_unescape(x)) for x in string_re.findall(stmt)]
+                      # Constructor statements may contain unrelated short labels/item names before the instruction.
+                      candidates=[]
+                      for t in strings:
+                          if 8 <= len(t) <= 700 and not BAD.search(t):
+                              # Prefer instruction-like prose, but keep clear sentence text even if the verb list misses it.
+                              if ACTION.search(t) or len(t)>=28 or t.endswith('.'):
+                                  candidates.append(t)
+                      if not candidates:
+                          continue
+                      # Usually the longest prose string is the actual QuestStep instruction.
+                      t=max(candidates,key=len)
+                      key=t.lower()
+                      if key not in seen:
+                          seen.add(key)
+                          out.append({'section':'RuneLite Quest Helper','text':t})
+                  if len(out)>=5:
+                      # A matching quest class with real setupSteps data has been found.
+                      break
+              return out[:160]
+
+          def qh_rewards(title):
+              """Extract quest rewards directly from RuneLite Quest Helper source."""
+              rewards=[]
+              for p in qh_candidates(title):
+                  try: text=p.read_text(encoding='utf-8',errors='ignore')
+                  except Exception: continue
+                  for n in re.findall(r'new\s+QuestPointReward\s*\(\s*(\d+)\s*\)', text):
+                      rewards.append(f'{n} Quest point' + ('' if n=='1' else 's'))
+                  for skill,amount in re.findall(r'new\s+ExperienceReward\s*\(\s*Skill\.([A-Z_]+)\s*,\s*([0-9_]+)', text):
+                      rewards.append(f'{int(amount.replace("_","")):,} {skill.replace("_"," ").title()} experience')
+                  for name,qty in re.findall(r'new\s+ItemReward\s*\(\s*"((?:\\.|[^"\\])+)"\s*,[^,\n]+,\s*([0-9_]+)\s*\)', text):
+                      name=clean(java_unescape(name)); q=int(qty.replace('_',''))
+                      rewards.append((f'{q:,} × ' if q!=1 else '') + name)
+                  for val in re.findall(r'new\s+UnlockReward\s*\(\s*"((?:\\.|[^"\\])+)"\s*\)', text):
+                      rewards.append(clean(java_unescape(val)))
+                  if rewards: break
+              return dedupe(rewards)
 
           def good_seed_steps(q):
               out=[]
@@ -1601,20 +1668,24 @@ jobs:
 
               quick_steps=parse_walkthrough(quick) if quick else []
               full_steps=parse_walkthrough(full) if full else []
-              best=quick_steps if quality(quick_steps)>=quality(full_steps) else full_steps
-              source='OSRS Wiki'
+              runelite=qh_steps(q['name'])
+              seed=good_seed_steps(q)
 
-              # If the wiki extraction is too thin, use RuneLite Quest Helper as a second source.
-              if quality(best)<70:
-                  runelite=qh_steps(q['name'])
-                  if quality(runelite)>quality(best):
-                      best=runelite; source='RuneLite Quest Helper'
+              # RuneLite Quest Helper is the primary detailed source because its source files encode
+              # the quest's ordered NPC/object/tile interactions. The Wiki quick guide is used when
+              # it is more complete, and the embedded seed is only a final fallback.
+              choices=[
+                  ('RuneLite Quest Helper', runelite),
+                  ('OSRS Wiki quick guide', quick_steps),
+                  ('OSRS Wiki full guide', full_steps),
+                  ('embedded Quest Helper seed', seed),
+              ]
+              source,best=max(choices,key=lambda pair:quality(pair[1]))
 
-              # Final fallback is the embedded Quest Helper seed.
-              if quality(best)<45:
-                  seed=good_seed_steps(q)
-                  if quality(seed)>quality(best):
-                      best=seed; source='embedded Quest Helper seed'
+              # If RuneLite is already detailed, prefer it over a slightly higher-scoring Wiki parse;
+              # this avoids wiki navigation/formatting fragments being mistaken for quest steps.
+              if quality(runelite)>=70 and len(runelite)>=4:
+                  source,best='RuneLite Quest Helper',runelite
 
               q['steps']=best
               if source=='OSRS Wiki': counts['wiki']+=1
@@ -1624,7 +1695,7 @@ jobs:
               items=parse_items(quick) or parse_items(full) or q.get('items',[])
               q['items']=dedupe(items)
               q['places']=dedupe(q.get('places',[]))
-              rewards=parse_rewards(full) or parse_rewards(quick) or dedupe(q.get('rewards',[]))
+              rewards=qh_rewards(q['name']) or parse_rewards(full) or parse_rewards(quick) or dedupe(q.get('rewards',[]))
               q['rewards']=dedupe(rewards)
 
               if q['steps']:
@@ -1647,10 +1718,16 @@ jobs:
               if score<45: counts['weak']+=1
               if not q['rewards']: counts['missing_rewards']+=1
               q['sourceNote']=f'Guide assembled from {source}; OSRS Wiki and RuneLite data are cross-checked where available. Quality score: {score}.'
-              audit.append([q['name'],source,len(q['steps']),score,len(q['rewards']), 'OK' if score>=45 else 'REVIEW'])
+              status='OK' if (len(q['steps'])>=3 and score>=45 and q.get('rewards')) else 'REVIEW'
+              audit.append([q['name'],source,len(q['steps']),score,len(q['rewards']),status])
               rebuilt.append(q)
               if idx%20==0: print(f'Processed {idx}/{len(data)} quests...')
               time.sleep(0.04)
+
+          review_rows=[r for r in audit if r[-1]=='REVIEW']
+          Path('questmate-complete/guide-review-needed.txt').write_text(
+              '\n'.join(f'{r[0]} | source={r[1]} | steps={r[2]} | score={r[3]} | rewards={r[4]}' for r in review_rows) or 'All quest entries passed the minimum completeness gate.',
+              encoding='utf-8')
 
           rebuilt.sort(key=lambda x:x.get('name','').lower())
           OUT.write_text(json.dumps(rebuilt,ensure_ascii=False,separators=(',',':')),encoding='utf-8')
@@ -1664,7 +1741,7 @@ jobs:
               f'Embedded seed fallbacks: {counts["seed"]}\n'
               f'Guides flagged for manual review: {counts["weak"]}\n'
               f'Entries missing parsed rewards: {counts["missing_rewards"]}\n'
-              'Every entry was individually scored for step count/detail. See guide-audit.csv for the per-quest result.\n'
+              'Every entry was individually scored for step count/detail and RuneLite rewards were parsed when available. See guide-audit.csv for the per-quest result.\n'
               'No external wiki links are stored in quests.json.\n', encoding='utf-8')
           print(REPORT.read_text())
           PYEOF
@@ -1919,5 +1996,6 @@ jobs:
           path: |
             questmate-complete/guide-build-report.txt
             questmate-complete/guide-audit.csv
+            questmate-complete/guide-review-needed.txt
           if-no-files-found: error
           retention-days: 30
