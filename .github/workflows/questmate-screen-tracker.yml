@@ -1,1 +1,922 @@
-test
+name: Build QuestMate Screen Tracker APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 16 SDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;35.0.0" "platform-tools"
+
+      - name: Create QuestMate Screen Tracker project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf QuestMateTracker
+          mkdir -p QuestMateTracker/app/src/main/java/com/questmate/tracker
+          mkdir -p QuestMateTracker/app/src/main/res/values
+
+          cat > QuestMateTracker/settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.name = "QuestMateTracker"
+          include(":app")
+          EOF
+
+          cat > QuestMateTracker/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.10.1' apply false
+          }
+          EOF
+
+          cat > QuestMateTracker/gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          android.nonTransitiveRClass=true
+          EOF
+
+          cat > QuestMateTracker/app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+          }
+
+          android {
+              namespace 'com.questmate.tracker'
+              compileSdk 36
+
+              defaultConfig {
+                  applicationId "com.questmate.tracker"
+                  minSdk 26
+                  targetSdk 36
+                  versionCode 1
+                  versionName "1.0-screen-tracker"
+              }
+
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+
+          dependencies {
+              implementation 'com.google.mlkit:text-recognition:16.0.1'
+          }
+          EOF
+
+          cat > QuestMateTracker/app/src/main/res/values/strings.xml <<'EOF'
+          <resources>
+              <string name="app_name">QuestMate Tracker</string>
+          </resources>
+          EOF
+
+          cat > QuestMateTracker/app/src/main/res/values/themes.xml <<'EOF'
+          <resources>
+              <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:windowLightStatusBar">true</item>
+                  <item name="android:navigationBarColor">#111111</item>
+              </style>
+          </resources>
+          EOF
+
+          cat > QuestMateTracker/app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+              <application
+                  android:allowBackup="true"
+                  android:label="QuestMate Tracker"
+                  android:theme="@style/AppTheme"
+                  android:supportsRtl="true">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+
+                  <service
+                      android:name=".CaptureService"
+                      android:exported="false"
+                      android:foregroundServiceType="mediaProjection" />
+              </application>
+          </manifest>
+          EOF
+
+          cat > QuestMateTracker/app/src/main/java/com/questmate/tracker/QuestData.java <<'EOF'
+          package com.questmate.tracker;
+
+          import java.util.ArrayList;
+          import java.util.Arrays;
+          import java.util.List;
+
+          public final class QuestData {
+
+              public static final class Step {
+                  public final String title;
+                  public final String instruction;
+                  public final String items;
+                  public final List<String> completionPhrases;
+
+                  public Step(String title, String instruction, String items, String... completionPhrases) {
+                      this.title = title;
+                      this.instruction = instruction;
+                      this.items = items;
+                      this.completionPhrases = Arrays.asList(completionPhrases);
+                  }
+              }
+
+              public static final class Quest {
+                  public final String name;
+                  public final List<Step> steps;
+
+                  public Quest(String name, List<Step> steps) {
+                      this.name = name;
+                      this.steps = steps;
+                  }
+              }
+
+              public static List<Quest> quests() {
+                  List<Quest> out = new ArrayList<>();
+
+                  out.add(new Quest("Black Knights' Fortress", Arrays.asList(
+                      new Step(
+                          "Speak to Sir Amik Varze",
+                          "Go to the western side of the White Knights' Castle in Falador and speak to Sir Amik Varze on the 3rd floor.",
+                          "Bronze med helm, iron chainbody, cabbage",
+                          "black knights", "fortress", "secret weapon"
+                      ),
+                      new Step(
+                          "Prepare your disguise",
+                          "Make sure you have a bronze med helm and iron chainbody. These allow you to enter the Black Knights' Fortress.",
+                          "Bronze med helm, iron chainbody",
+                          "bronze med helm", "iron chainbody"
+                      ),
+                      new Step(
+                          "Enter the Black Knights' Fortress",
+                          "Travel north of Ice Mountain to the Black Knights' Fortress. Equip the bronze med helm and iron chainbody before entering.",
+                          "Bronze med helm, iron chainbody",
+                          "black knight", "fortress"
+                      ),
+                      new Step(
+                          "Listen through the wall",
+                          "Inside the fortress, use the fake wall and continue through the rooms until you can listen to the Black Knights' secret meeting.",
+                          "None",
+                          "witch", "secret weapon", "cabbage"
+                      ),
+                      new Step(
+                          "Sabotage the weapon",
+                          "Take your cabbage to the room above the cauldron and drop it through the hole to ruin the witch's potion.",
+                          "Cabbage",
+                          "cabbage", "cauldron", "ruined"
+                      ),
+                      new Step(
+                          "Return to Sir Amik Varze",
+                          "Return to Sir Amik Varze in Falador and report that the Black Knights' secret weapon has been sabotaged.",
+                          "None",
+                          "quest complete", "black knights' fortress"
+                      )
+                  )));
+
+                  out.add(new Quest("Cook's Assistant", Arrays.asList(
+                      new Step(
+                          "Speak to the Cook",
+                          "Speak to the Cook in the kitchen on the ground floor of Lumbridge Castle.",
+                          "Pot, bucket",
+                          "cook", "cake", "ingredients"
+                      ),
+                      new Step(
+                          "Get an egg",
+                          "Pick up an egg from the chicken farm north-east of Lumbridge.",
+                          "Egg",
+                          "egg"
+                      ),
+                      new Step(
+                          "Get a bucket of milk",
+                          "Use an empty bucket on a dairy cow in the cow field east of Lumbridge.",
+                          "Bucket",
+                          "bucket of milk", "milk"
+                      ),
+                      new Step(
+                          "Get a pot of flour",
+                          "Pick wheat north-west of Lumbridge, take it to the top of the Lumbridge windmill, operate the hopper, then collect flour downstairs with a pot.",
+                          "Pot, grain",
+                          "pot of flour", "flour"
+                      ),
+                      new Step(
+                          "Return to the Cook",
+                          "Bring the egg, bucket of milk and pot of flour back to the Cook in Lumbridge Castle.",
+                          "Egg, bucket of milk, pot of flour",
+                          "quest complete", "cook's assistant"
+                      )
+                  )));
+
+                  out.add(new Quest("Sheep Shearer", Arrays.asList(
+                      new Step(
+                          "Speak to Fred the Farmer",
+                          "Speak to Fred the Farmer in his house north-west of Lumbridge and offer to help with the sheep.",
+                          "Shears",
+                          "fred", "wool", "sheep"
+                      ),
+                      new Step(
+                          "Shear sheep",
+                          "Use shears on sheep in Fred's field until you have 20 pieces of wool.",
+                          "Shears",
+                          "wool", "shear"
+                      ),
+                      new Step(
+                          "Spin the wool",
+                          "Take the wool to the spinning wheel on the 1st floor of Lumbridge Castle and spin 20 balls of wool.",
+                          "20 wool",
+                          "ball of wool", "spinning wheel"
+                      ),
+                      new Step(
+                          "Return to Fred",
+                          "Take the 20 balls of wool back to Fred the Farmer.",
+                          "20 balls of wool",
+                          "quest complete", "sheep shearer"
+                      )
+                  )));
+
+                  return out;
+              }
+
+              private QuestData() {}
+          }
+          EOF
+
+          cat > QuestMateTracker/app/src/main/java/com/questmate/tracker/MainActivity.java <<'EOF'
+          package com.questmate.tracker;
+
+          import android.Manifest;
+          import android.app.Activity;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.pm.PackageManager;
+          import android.graphics.Color;
+          import android.media.projection.MediaProjectionManager;
+          import android.net.Uri;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.provider.Settings;
+          import android.view.Gravity;
+          import android.view.View;
+          import android.widget.ArrayAdapter;
+          import android.widget.Button;
+          import android.widget.LinearLayout;
+          import android.widget.Spinner;
+          import android.widget.TextView;
+          import android.widget.Toast;
+
+          import java.util.ArrayList;
+          import java.util.List;
+
+          public class MainActivity extends Activity {
+
+              private static final int REQ_CAPTURE = 7001;
+              private static final int REQ_NOTIFICATIONS = 7002;
+
+              private Spinner questSpinner;
+              private final List<QuestData.Quest> quests = QuestData.quests();
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+
+                  LinearLayout root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  root.setPadding(34, 34, 34, 34);
+                  root.setBackgroundColor(Color.rgb(24, 24, 24));
+
+                  TextView title = text("QuestMate Screen Tracker", 26, Color.WHITE);
+                  title.setGravity(Gravity.CENTER_HORIZONTAL);
+                  root.addView(title);
+
+                  TextView info = text(
+                      "\nThis prototype reads visible OSRS screen text and advances a floating quest-step overlay. " +
+                      "It never taps, walks or controls the game.\n\n" +
+                      "Setup: grant overlay permission, choose a quest, then start screen tracking.",
+                      16, Color.LTGRAY
+                  );
+                  root.addView(info);
+
+                  questSpinner = new Spinner(this);
+                  List<String> names = new ArrayList<>();
+                  for (QuestData.Quest q : quests) names.add(q.name);
+                  ArrayAdapter<String> adapter = new ArrayAdapter<>(
+                      this,
+                      android.R.layout.simple_spinner_dropdown_item,
+                      names
+                  );
+                  questSpinner.setAdapter(adapter);
+                  root.addView(questSpinner);
+
+                  Button overlayButton = button("1. Grant overlay permission");
+                  overlayButton.setOnClickListener(v -> grantOverlayPermission());
+                  root.addView(overlayButton);
+
+                  Button startButton = button("2. Start screen tracking");
+                  startButton.setOnClickListener(v -> beginCapture());
+                  root.addView(startButton);
+
+                  Button stopButton = button("Stop tracker");
+                  stopButton.setOnClickListener(v -> {
+                      Intent i = new Intent(this, CaptureService.class);
+                      i.setAction(CaptureService.ACTION_STOP);
+                      startService(i);
+                  });
+                  root.addView(stopButton);
+
+                  TextView note = text(
+                      "\nTest first with Cook's Assistant, Sheep Shearer, or Black Knights' Fortress. " +
+                      "The overlay has Back/Next buttons so you can correct the step if OCR misses something.",
+                      14, Color.GRAY
+                  );
+                  root.addView(note);
+
+                  setContentView(root);
+
+                  if (Build.VERSION.SDK_INT >= 33 &&
+                      checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                      requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIFICATIONS);
+                  }
+              }
+
+              private TextView text(String value, int sp, int color) {
+                  TextView v = new TextView(this);
+                  v.setText(value);
+                  v.setTextSize(sp);
+                  v.setTextColor(color);
+                  v.setPadding(12, 12, 12, 12);
+                  return v;
+              }
+
+              private Button button(String label) {
+                  Button b = new Button(this);
+                  b.setText(label);
+                  LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                      LinearLayout.LayoutParams.MATCH_PARENT,
+                      LinearLayout.LayoutParams.WRAP_CONTENT
+                  );
+                  lp.setMargins(0, 16, 0, 0);
+                  b.setLayoutParams(lp);
+                  return b;
+              }
+
+              private void grantOverlayPermission() {
+                  if (Settings.canDrawOverlays(this)) {
+                      Toast.makeText(this, "Overlay permission is already enabled.", Toast.LENGTH_SHORT).show();
+                      return;
+                  }
+                  Intent intent = new Intent(
+                      Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                      Uri.parse("package:" + getPackageName())
+                  );
+                  startActivity(intent);
+              }
+
+              private void beginCapture() {
+                  if (!Settings.canDrawOverlays(this)) {
+                      Toast.makeText(this, "Grant overlay permission first.", Toast.LENGTH_LONG).show();
+                      grantOverlayPermission();
+                      return;
+                  }
+
+                  int index = questSpinner.getSelectedItemPosition();
+                  MediaProjectionManager manager =
+                      (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+                  Intent captureIntent = manager.createScreenCaptureIntent();
+                  captureIntent.putExtra("quest_index", index);
+                  startActivityForResult(captureIntent, REQ_CAPTURE);
+              }
+
+              @Override
+              protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+                  super.onActivityResult(requestCode, resultCode, data);
+                  if (requestCode != REQ_CAPTURE) return;
+
+                  if (resultCode != RESULT_OK || data == null) {
+                      Toast.makeText(this, "Screen capture was not granted.", Toast.LENGTH_LONG).show();
+                      return;
+                  }
+
+                  Intent service = new Intent(this, CaptureService.class);
+                  service.setAction(CaptureService.ACTION_START);
+                  service.putExtra(CaptureService.EXTRA_RESULT_CODE, resultCode);
+                  service.putExtra(CaptureService.EXTRA_RESULT_DATA, data);
+                  service.putExtra(CaptureService.EXTRA_QUEST_INDEX, questSpinner.getSelectedItemPosition());
+
+                  if (Build.VERSION.SDK_INT >= 26) {
+                      startForegroundService(service);
+                  } else {
+                      startService(service);
+                  }
+
+                  Toast.makeText(this, "Tracker started. Open OSRS.", Toast.LENGTH_LONG).show();
+                  moveTaskToBack(true);
+              }
+          }
+          EOF
+
+          cat > QuestMateTracker/app/src/main/java/com/questmate/tracker/CaptureService.java <<'EOF'
+          package com.questmate.tracker;
+
+          import android.app.Notification;
+          import android.app.NotificationChannel;
+          import android.app.NotificationManager;
+          import android.app.Service;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.graphics.Bitmap;
+          import android.graphics.Color;
+          import android.graphics.PixelFormat;
+          import android.graphics.drawable.GradientDrawable;
+          import android.hardware.display.DisplayManager;
+          import android.hardware.display.VirtualDisplay;
+          import android.media.Image;
+          import android.media.ImageReader;
+          import android.media.projection.MediaProjection;
+          import android.media.projection.MediaProjectionManager;
+          import android.os.Build;
+          import android.os.Handler;
+          import android.os.IBinder;
+          import android.os.Looper;
+          import android.os.Parcelable;
+          import android.util.DisplayMetrics;
+          import android.view.Gravity;
+          import android.view.View;
+          import android.view.WindowManager;
+          import android.widget.Button;
+          import android.widget.LinearLayout;
+          import android.widget.TextView;
+
+          import com.google.mlkit.vision.common.InputImage;
+          import com.google.mlkit.vision.text.Text;
+          import com.google.mlkit.vision.text.TextRecognition;
+          import com.google.mlkit.vision.text.TextRecognizer;
+          import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
+
+          import java.nio.ByteBuffer;
+          import java.util.List;
+          import java.util.Locale;
+          import java.util.concurrent.atomic.AtomicBoolean;
+
+          public class CaptureService extends Service {
+
+              public static final String ACTION_START = "com.questmate.tracker.START";
+              public static final String ACTION_STOP = "com.questmate.tracker.STOP";
+              public static final String EXTRA_RESULT_CODE = "result_code";
+              public static final String EXTRA_RESULT_DATA = "result_data";
+              public static final String EXTRA_QUEST_INDEX = "quest_index";
+
+              private static final String CHANNEL_ID = "questmate_capture";
+              private static final int NOTIFICATION_ID = 42;
+
+              private MediaProjection mediaProjection;
+              private VirtualDisplay virtualDisplay;
+              private ImageReader imageReader;
+              private TextRecognizer recognizer;
+              private WindowManager windowManager;
+              private View overlayView;
+              private TextView overlayTitle;
+              private TextView overlayInstruction;
+              private TextView overlayItems;
+              private TextView overlayStatus;
+
+              private QuestData.Quest quest;
+              private int currentStep = 0;
+
+              private final Handler handler = new Handler(Looper.getMainLooper());
+              private final AtomicBoolean processing = new AtomicBoolean(false);
+              private long lastProcessed = 0L;
+
+              @Override
+              public void onCreate() {
+                  super.onCreate();
+                  createNotificationChannel();
+                  recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
+              }
+
+              @Override
+              public int onStartCommand(Intent intent, int flags, int startId) {
+                  if (intent == null) return START_NOT_STICKY;
+
+                  if (ACTION_STOP.equals(intent.getAction())) {
+                      stopEverything();
+                      stopSelf();
+                      return START_NOT_STICKY;
+                  }
+
+                  if (!ACTION_START.equals(intent.getAction())) return START_NOT_STICKY;
+
+                  startForeground(NOTIFICATION_ID, buildNotification("Quest tracking active"));
+
+                  int resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, ActivityResultCodes.CANCELED);
+                  Intent data = getParcelableIntent(intent, EXTRA_RESULT_DATA);
+                  int questIndex = intent.getIntExtra(EXTRA_QUEST_INDEX, 0);
+
+                  List<QuestData.Quest> quests = QuestData.quests();
+                  if (questIndex < 0 || questIndex >= quests.size()) questIndex = 0;
+                  quest = quests.get(questIndex);
+                  currentStep = 0;
+
+                  showOverlay();
+
+                  if (data == null || resultCode != ActivityResultCodes.OK) {
+                      setStatus("Screen permission data missing.");
+                      return START_NOT_STICKY;
+                  }
+
+                  MediaProjectionManager manager =
+                      (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+                  mediaProjection = manager.getMediaProjection(resultCode, data);
+
+                  if (mediaProjection == null) {
+                      setStatus("Could not start screen capture.");
+                      return START_NOT_STICKY;
+                  }
+
+                  mediaProjection.registerCallback(new MediaProjection.Callback() {
+                      @Override
+                      public void onStop() {
+                          handler.post(() -> {
+                              setStatus("Screen capture stopped.");
+                              stopSelf();
+                          });
+                      }
+                  }, handler);
+
+                  startVirtualDisplay();
+                  return START_NOT_STICKY;
+              }
+
+              @SuppressWarnings("deprecation")
+              private Intent getParcelableIntent(Intent source, String key) {
+                  if (Build.VERSION.SDK_INT >= 33) {
+                      return source.getParcelableExtra(key, Intent.class);
+                  }
+                  Parcelable p = source.getParcelableExtra(key);
+                  return p instanceof Intent ? (Intent) p : null;
+              }
+
+              private void startVirtualDisplay() {
+                  DisplayMetrics dm = getResources().getDisplayMetrics();
+                  int width = dm.widthPixels;
+                  int height = dm.heightPixels;
+                  int density = dm.densityDpi;
+
+                  imageReader = ImageReader.newInstance(
+                      width,
+                      height,
+                      PixelFormat.RGBA_8888,
+                      2
+                  );
+
+                  virtualDisplay = mediaProjection.createVirtualDisplay(
+                      "QuestMateCapture",
+                      width,
+                      height,
+                      density,
+                      DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                      imageReader.getSurface(),
+                      null,
+                      handler
+                  );
+
+                  imageReader.setOnImageAvailableListener(reader -> {
+                      long now = System.currentTimeMillis();
+                      if (now - lastProcessed < 1400L || processing.get()) {
+                          Image skipped = reader.acquireLatestImage();
+                          if (skipped != null) skipped.close();
+                          return;
+                      }
+                      lastProcessed = now;
+
+                      Image image = reader.acquireLatestImage();
+                      if (image == null) return;
+
+                      Bitmap bitmap = null;
+                      try {
+                          bitmap = imageToBitmap(image);
+                      } catch (Exception e) {
+                          setStatus("Frame error: " + e.getClass().getSimpleName());
+                      } finally {
+                          image.close();
+                      }
+
+                      if (bitmap != null) processBitmap(bitmap);
+                  }, handler);
+
+                  setStatus("Watching OSRS screen…");
+              }
+
+              private Bitmap imageToBitmap(Image image) {
+                  Image.Plane plane = image.getPlanes()[0];
+                  ByteBuffer buffer = plane.getBuffer();
+                  int pixelStride = plane.getPixelStride();
+                  int rowStride = plane.getRowStride();
+                  int rowPadding = rowStride - pixelStride * image.getWidth();
+
+                  int paddedWidth = image.getWidth() + rowPadding / pixelStride;
+                  Bitmap padded = Bitmap.createBitmap(
+                      paddedWidth,
+                      image.getHeight(),
+                      Bitmap.Config.ARGB_8888
+                  );
+                  padded.copyPixelsFromBuffer(buffer);
+
+                  Bitmap cropped = Bitmap.createBitmap(
+                      padded,
+                      0,
+                      0,
+                      image.getWidth(),
+                      image.getHeight()
+                  );
+                  if (cropped != padded) padded.recycle();
+                  return cropped;
+              }
+
+              private void processBitmap(Bitmap bitmap) {
+                  processing.set(true);
+                  InputImage input = InputImage.fromBitmap(bitmap, 0);
+
+                  recognizer.process(input)
+                      .addOnSuccessListener(this::handleRecognizedText)
+                      .addOnFailureListener(e -> setStatus("OCR retrying…"))
+                      .addOnCompleteListener(task -> {
+                          processing.set(false);
+                          bitmap.recycle();
+                      });
+              }
+
+              private void handleRecognizedText(Text result) {
+                  String detected = result.getText() == null
+                      ? ""
+                      : result.getText().toLowerCase(Locale.ROOT);
+
+                  if (detected.isEmpty()) {
+                      setStatus("Watching… no readable text this frame.");
+                      return;
+                  }
+
+                  QuestData.Step step = quest.steps.get(currentStep);
+                  int hits = 0;
+                  for (String phrase : step.completionPhrases) {
+                      if (detected.contains(phrase.toLowerCase(Locale.ROOT))) hits++;
+                  }
+
+                  setStatus("OCR active • " + hits + " step match" + (hits == 1 ? "" : "es"));
+
+                  if (hits >= 1 && currentStep < quest.steps.size() - 1) {
+                      // Conservative advancement: require the same step match again after a delay.
+                      final int expectedStep = currentStep;
+                      handler.postDelayed(() -> {
+                          if (currentStep == expectedStep) {
+                              currentStep++;
+                              updateOverlay();
+                              setStatus("Step advanced automatically.");
+                          }
+                      }, 2200L);
+                  }
+              }
+
+              private void showOverlay() {
+                  if (overlayView != null) return;
+
+                  windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
+
+                  LinearLayout panel = new LinearLayout(this);
+                  panel.setOrientation(LinearLayout.VERTICAL);
+                  panel.setPadding(20, 16, 20, 16);
+
+                  GradientDrawable bg = new GradientDrawable();
+                  bg.setColor(Color.argb(225, 20, 20, 20));
+                  bg.setCornerRadius(24f);
+                  bg.setStroke(2, Color.argb(220, 220, 180, 30));
+                  panel.setBackground(bg);
+
+                  overlayTitle = label(17, Color.WHITE);
+                  overlayInstruction = label(15, Color.WHITE);
+                  overlayItems = label(14, Color.rgb(255, 220, 110));
+                  overlayStatus = label(12, Color.LTGRAY);
+
+                  panel.addView(overlayTitle);
+                  panel.addView(overlayInstruction);
+                  panel.addView(overlayItems);
+                  panel.addView(overlayStatus);
+
+                  LinearLayout controls = new LinearLayout(this);
+                  controls.setOrientation(LinearLayout.HORIZONTAL);
+
+                  Button back = new Button(this);
+                  back.setText("◀ Back");
+                  back.setOnClickListener(v -> {
+                      if (currentStep > 0) {
+                          currentStep--;
+                          updateOverlay();
+                      }
+                  });
+
+                  Button next = new Button(this);
+                  next.setText("Next ▶");
+                  next.setOnClickListener(v -> {
+                      if (currentStep < quest.steps.size() - 1) {
+                          currentStep++;
+                          updateOverlay();
+                      }
+                  });
+
+                  Button close = new Button(this);
+                  close.setText("Stop");
+                  close.setOnClickListener(v -> {
+                      stopEverything();
+                      stopSelf();
+                  });
+
+                  controls.addView(back);
+                  controls.addView(next);
+                  controls.addView(close);
+                  panel.addView(controls);
+
+                  int type = Build.VERSION.SDK_INT >= 26
+                      ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                      : WindowManager.LayoutParams.TYPE_PHONE;
+
+                  WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                      dp(340),
+                      WindowManager.LayoutParams.WRAP_CONTENT,
+                      type,
+                      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
+                          WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                      PixelFormat.TRANSLUCENT
+                  );
+                  params.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+                  params.y = dp(48);
+
+                  overlayView = panel;
+                  windowManager.addView(overlayView, params);
+                  updateOverlay();
+              }
+
+              private TextView label(int sp, int color) {
+                  TextView t = new TextView(this);
+                  t.setTextSize(sp);
+                  t.setTextColor(color);
+                  t.setPadding(4, 4, 4, 6);
+                  return t;
+              }
+
+              private int dp(int value) {
+                  return Math.round(value * getResources().getDisplayMetrics().density);
+              }
+
+              private void updateOverlay() {
+                  if (quest == null || overlayTitle == null) return;
+                  QuestData.Step step = quest.steps.get(currentStep);
+                  overlayTitle.setText(
+                      quest.name + "\nStep " + (currentStep + 1) + " / " + quest.steps.size() +
+                      " — " + step.title
+                  );
+                  overlayInstruction.setText(step.instruction);
+                  overlayItems.setText("Needed: " + step.items);
+              }
+
+              private void setStatus(String status) {
+                  handler.post(() -> {
+                      if (overlayStatus != null) overlayStatus.setText(status);
+                  });
+              }
+
+              private void stopEverything() {
+                  if (imageReader != null) {
+                      imageReader.close();
+                      imageReader = null;
+                  }
+                  if (virtualDisplay != null) {
+                      virtualDisplay.release();
+                      virtualDisplay = null;
+                  }
+                  if (mediaProjection != null) {
+                      mediaProjection.stop();
+                      mediaProjection = null;
+                  }
+                  if (recognizer != null) {
+                      recognizer.close();
+                      recognizer = null;
+                  }
+                  if (overlayView != null && windowManager != null) {
+                      try {
+                          windowManager.removeView(overlayView);
+                      } catch (Exception ignored) {}
+                      overlayView = null;
+                  }
+                  stopForeground(STOP_FOREGROUND_REMOVE);
+              }
+
+              @Override
+              public void onDestroy() {
+                  stopEverything();
+                  super.onDestroy();
+              }
+
+              @Override
+              public IBinder onBind(Intent intent) {
+                  return null;
+              }
+
+              private void createNotificationChannel() {
+                  if (Build.VERSION.SDK_INT >= 26) {
+                      NotificationChannel channel = new NotificationChannel(
+                          CHANNEL_ID,
+                          "QuestMate screen tracking",
+                          NotificationManager.IMPORTANCE_LOW
+                      );
+                      NotificationManager manager =
+                          (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+                      manager.createNotificationChannel(channel);
+                  }
+              }
+
+              private Notification buildNotification(String text) {
+                  Notification.Builder builder = Build.VERSION.SDK_INT >= 26
+                      ? new Notification.Builder(this, CHANNEL_ID)
+                      : new Notification.Builder(this);
+
+                  return builder
+                      .setContentTitle("QuestMate Tracker")
+                      .setContentText(text)
+                      .setSmallIcon(android.R.drawable.ic_menu_view)
+                      .setOngoing(true)
+                      .build();
+              }
+
+              private static final class ActivityResultCodes {
+                  static final int OK = -1;
+                  static final int CANCELED = 0;
+              }
+          }
+          EOF
+
+      - name: Build APK with Gradle
+        working-directory: QuestMateTracker
+        run: |
+          gradle wrapper --gradle-version 8.11.1
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Verify APK exists
+        run: |
+          test -f QuestMateTracker/app/build/outputs/apk/debug/app-debug.apk
+          ls -lh QuestMateTracker/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload QuestMate Tracker APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuestMate-Screen-Tracker-Android16
+          path: QuestMateTracker/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
