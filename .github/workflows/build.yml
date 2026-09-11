@@ -1,4 +1,4 @@
-name: Build QuestMate Complete - All Quest Detailed Guides v11
+name: Build QuestMate Complete - Canonical OSRS Quest Index v12
 
 on:
   workflow_dispatch:
@@ -85,8 +85,8 @@ jobs:
                   applicationId 'com.questmate.complete'
                   minSdk 26
                   targetSdk 35
-                  versionCode 9
-                  versionName '11.0-all-quest-detail-audit'
+                  versionCode 12
+                  versionName '12.0-canonical-osrs-quest-index'
               }
           }
           EOF
@@ -1308,17 +1308,29 @@ jobs:
           OUT = Path('questmate-complete/app/src/main/assets/quests.json')
           REPORT = Path('questmate-complete/guide-build-report.txt')
           AUDIT = Path('questmate-complete/guide-audit.csv')
+          REVIEW = Path('questmate-complete/guide-review-needed.txt')
           QH_ROOT = Path('/tmp/quest-helper/src/main/java/com/questhelper/helpers/quests')
 
           session = requests.Session()
           session.headers.update({
-              'User-Agent': 'QuestMateCompleteGuideBuilder/10.0 (GitHub Actions; non-commercial guide compilation)',
+              'User-Agent': 'QuestMateCanonicalBuilder/12.0 (GitHub Actions; non-commercial guide compilation)',
               'Accept-Language': 'en-AU,en;q=0.9'
           })
 
-          BAD = re.compile(r'(?i)not yet implemented|unknown|relevant npc|relevant location|placeholder|wiki reference|https?://')
           SPACE = re.compile(r'\s+')
-          ACTION = re.compile(r'(?i)\b(talk|speak|go|travel|walk|run|enter|leave|climb|use|take|pick|collect|give|return|kill|fight|search|open|close|pull|push|operate|equip|wear|buy|bring|head|follow|cross|board|teleport|inspect|read|mine|cut|light|cook|make|place|unlock|drink|cast|pray|dig|craft|smith|choose|select|watch|wait)\b')
+          URL = re.compile(r'https?://', re.I)
+          BAD = re.compile(
+              r'(?i)\b(?:not yet implemented|unknown|relevant npc|relevant location|placeholder|'
+              r'wiki reference|edit source|combat achievements|historical behaviours|player characters|'
+              r'non-player characters|references|changes|trivia|transcript|contents)\b'
+          )
+          ACTION = re.compile(
+              r'(?i)\b(?:talk|speak|ask|go|travel|walk|run|enter|leave|climb|use|take|pick|collect|'
+              r'give|return|kill|fight|search|open|close|pull|push|operate|equip|wear|buy|bring|head|'
+              r'follow|cross|board|teleport|inspect|read|mine|cut|light|cook|make|place|unlock|drink|'
+              r'cast|pray|dig|craft|smith|choose|select|watch|wait|solve|move|turn|click|pass|pay|'
+              r'hand|fill|empty|drop|pickpocket|steal|attack|defeat|sail|row|repair|investigate)\b'
+          )
 
           NAME_FIX = {
               'Cooks Assistant': "Cook's Assistant",
@@ -1326,176 +1338,303 @@ jobs:
               'Black Knights Fortress': "Black Knights' Fortress",
               'A Porcine Of Interest': 'A Porcine of Interest',
               'A Night At The Theatre': 'A Night at the Theatre',
-              'Demon Slayer': 'Demon Slayer',
+              'A Souls Bane': "A Soul's Bane",
+              'A Tail Of Two Cats': 'A Tail of Two Cats',
+              'A Taste Of Hope': 'A Taste of Hope',
           }
 
-          def clean(s):
-              s = html.unescape(str(s or ''))
+          STOP_HEADINGS = (
+              'reward', 'rewards', 'required for completing', 'changes', 'references',
+              'transcript', 'navigation', 'music unlocked', 'trivia', 'gallery',
+              'update history', 'see also'
+          )
+          IGNORE_HEADINGS = (
+              'contents', 'overview', 'details', 'recommended', 'requirements',
+              'walkthrough', 'quick guide'
+          )
+
+          def clean(value):
+              s = html.unescape(str(value or ''))
               s = s.replace('\xa0', ' ')
               s = re.sub(r'\[edit(?: \| edit source)?\]', '', s, flags=re.I)
+              s = re.sub(r'\s*Show on map\s*', ' ', s, flags=re.I)
               s = re.sub(r'Image:\s*', '', s, flags=re.I)
-              s = re.sub(r'\s*Show on map\s*', '', s, flags=re.I)
-              s = re.sub(r'\s*Quick Guide\s*', '', s, flags=re.I)
+              s = re.sub(r'\s*\(edit\)\s*', ' ', s, flags=re.I)
               s = SPACE.sub(' ', s).strip(' \t\r\n•-–—')
               return s
 
           def normalise_markup(value):
-              if value is None: return ''
-              if isinstance(value, bytes): return value.decode('utf-8', errors='replace')
-              if isinstance(value, str): return value
-              if isinstance(value, dict):
-                  for key in ('*','html','text','body','content'):
-                      if key in value:
-                          v=normalise_markup(value.get(key))
-                          if v: return v
+              if value is None:
                   return ''
-              if isinstance(value, (list,tuple)):
+              if isinstance(value, bytes):
+                  return value.decode('utf-8', errors='replace')
+              if isinstance(value, str):
+                  return value
+              if isinstance(value, dict):
+                  for key in ('*', 'html', 'text', 'body', 'content'):
+                      if key in value:
+                          got = normalise_markup(value.get(key))
+                          if got:
+                              return got
+                  return ''
+              if isinstance(value, (list, tuple)):
                   return ''.join(normalise_markup(v) for v in value)
               return ''
 
           def safe_soup(markup):
-              markup=normalise_markup(markup)
-              if not markup: return None
-              try: return BeautifulSoup(markup, 'html.parser')
+              markup = normalise_markup(markup)
+              if not markup:
+                  return None
+              try:
+                  return BeautifulSoup(markup, 'html.parser')
               except Exception as exc:
-                  print('Parser warning:', exc); return None
-
-          def direct_li_text(li):
-              clone=BeautifulSoup(str(li), 'html.parser').find('li')
-              if clone is None: return clean(li.get_text(' ',strip=True))
-              for nested in clone.find_all(['ul','ol']): nested.decompose()
-              return clean(clone.get_text(' ',strip=True))
-
-          def dedupe(values):
-              out=[]; seen=set()
-              for value in values:
-                  t=clean(value); k=t.lower()
-                  if t and k not in seen and not BAD.search(t):
-                      seen.add(k); out.append(t)
-              return out
+                  print('HTML parser warning:', exc)
+                  return None
 
           def wiki_parse(page):
-              params={'action':'parse','page':page,'prop':'text','format':'json','formatversion':'2','redirects':'1','disablelimitreport':'1'}
+              params = {
+                  'action': 'parse',
+                  'page': page,
+                  'prop': 'text',
+                  'format': 'json',
+                  'formatversion': '2',
+                  'redirects': '1',
+                  'disablelimitreport': '1'
+              }
               try:
-                  r=session.get('https://oldschool.runescape.wiki/api.php',params=params,timeout=20)
-                  if r.ok:
-                      j=r.json(); parsed=j.get('parse',{}).get('text','')
-                      parsed=normalise_markup(parsed)
-                      if parsed: return parsed
+                  r = session.get('https://oldschool.runescape.wiki/api.php', params=params, timeout=30)
+                  if not r.ok:
+                      return ''
+                  j = r.json()
+                  if 'error' in j:
+                      return ''
+                  return normalise_markup(j.get('parse', {}).get('text', ''))
               except Exception as exc:
-                  print(f'Wiki parse failed for {page}: {exc}')
-              return ''
+                  print(f'OSRS Wiki parse failed for {page}: {exc}')
+                  return ''
 
-          def resolve_wiki_title(title):
-              fixed=NAME_FIX.get(title,title).strip()
-              # First try exact page and quick-guide page.
-              if wiki_parse(fixed + '/Quick guide') or wiki_parse(fixed):
-                  return fixed
-              # Resolve imperfect seed names with MediaWiki search.
-              try:
-                  params={'action':'query','list':'search','srsearch':fixed,'srnamespace':'0','srlimit':'5','format':'json','formatversion':'2'}
-                  r=session.get('https://oldschool.runescape.wiki/api.php',params=params,timeout=20)
-                  if r.ok:
-                      for hit in r.json().get('query',{}).get('search',[]):
-                          candidate=clean(hit.get('title',''))
-                          if candidate and '/Quick guide' not in candidate:
-                              if wiki_parse(candidate + '/Quick guide') or wiki_parse(candidate):
-                                  return candidate
-              except Exception as exc:
-                  print(f'Wiki title search failed for {fixed}: {exc}')
-              return fixed
+          def direct_text_without_nested_lists(node):
+              clone = BeautifulSoup(str(node), 'html.parser').find(node.name)
+              if clone is None:
+                  return clean(node.get_text(' ', strip=True))
+              for nested in clone.find_all(['ul', 'ol']):
+                  nested.decompose()
+              return clean(clone.get_text(' ', strip=True))
 
-          def fetch_wiki(title):
-              canonical=resolve_wiki_title(title)
-              quick=wiki_parse(canonical + '/Quick guide')
-              full=wiki_parse(canonical)
-              return canonical, quick, full
+          def dedupe(values):
+              out, seen = [], set()
+              for value in values:
+                  t = clean(value)
+                  k = t.casefold()
+                  if not t or k in seen or URL.search(t):
+                      continue
+                  seen.add(k)
+                  out.append(t)
+              return out
 
-          def iter_after_heading(soup, target):
-              for h in soup.find_all(['h2','h3']):
-                  label=clean(h.get_text(' ',strip=True)).lower()
-                  if label == target or label.startswith(target+' '):
-                      level=int(h.name[1])
+          def canonical_quest_titles():
+              markup = wiki_parse('Quests/List')
+              soup = safe_soup(markup)
+              if soup is None:
+                  raise RuntimeError('Could not load the official OSRS Quests/List page.')
+
+              wanted_sections = {'free-to-play quests', "members' quests", 'members quests'}
+              titles = []
+              active = False
+
+              for node in soup.find_all(['h2', 'table']):
+                  if node.name == 'h2':
+                      label = clean(node.get_text(' ', strip=True)).lower()
+                      active = label in wanted_sections
+                      if titles and label.startswith(('miniquest', 'quest classifications', 'see also')):
+                          active = False
+                      continue
+
+                  if node.name != 'table' or not active:
+                      continue
+
+                  for tr in node.find_all('tr'):
+                      cells = tr.find_all(['td', 'th'], recursive=False)
+                      if len(cells) < 2:
+                          continue
+                      name_cell = cells[1]
+                      link = name_cell.find('a', href=True)
+                      title = clean(link.get('title') if link and link.get('title') else name_cell.get_text(' ', strip=True))
+                      if not title or title.lower() in ('name', 'quest'):
+                          continue
+                      if title.startswith(('File:', 'Category:', 'Template:')):
+                          continue
+                      titles.append(title)
+
+              titles = dedupe(titles)
+              if len(titles) < 182:
+                  raise RuntimeError(f'Canonical quest list only contained {len(titles)} entries; refusing to build an incomplete APK.')
+              return titles
+
+          def seed_index():
+              raw = json.loads(SRC.read_text(encoding='utf-8'))
+              out = {}
+              for q in raw:
+                  name = NAME_FIX.get(clean(q.get('name', '')), clean(q.get('name', '')))
+                  key = re.sub(r'[^a-z0-9]', '', name.lower())
+                  if key and key not in out:
+                      out[key] = q
+              return out
+
+          def title_key(title):
+              return re.sub(r'[^a-z0-9]', '', clean(title).lower())
+
+          def exact_wiki_pages(title):
+              quick = wiki_parse(title + '/Quick guide')
+              full = wiki_parse(title)
+              if not full:
+                  raise RuntimeError(f'Canonical quest page could not be loaded: {title}')
+              return quick, full
+
+          def find_walkthrough_start(soup):
+              for h in soup.find_all(['h2', 'h3']):
+                  label = clean(h.get_text(' ', strip=True)).lower()
+                  if label == 'walkthrough' or label.startswith('walkthrough '):
+                      return h
+              return None
+
+          def useful_instruction(text):
+              t = clean(text)
+              if len(t) < 8 or URL.search(t) or BAD.search(t):
+                  return False
+              low = t.lower()
+              if low.startswith(('this article is about', 'this quest has a', 'for a more in-depth', 'this section or article')):
+                  return False
+              if re.fullmatch(r'(?:\d+(?:\.\d+)*\s+)?[A-Za-z][A-Za-z \-\'&]{0,55}', t) and not ACTION.search(t):
+                  return False
+              return bool(ACTION.search(t) or len(t) >= 55)
+
+          def parse_walkthrough(markup):
+              soup = safe_soup(markup)
+              if soup is None:
+                  return []
+
+              root = find_walkthrough_start(soup)
+              container = soup.find(class_='mw-parser-output') or soup
+              stream = root.find_all_next() if root else container.find_all(['h2','h3','p','li','tr'])
+
+              section = 'Walkthrough'
+              out = []
+              seen = set()
+              started = root is None
+
+              for node in stream:
+                  if not isinstance(node, Tag):
+                      continue
+                  if root and node is root:
+                      started = True
+                      continue
+                  if not started:
+                      continue
+
+                  if node.name in ('h2', 'h3'):
+                      heading = clean(node.get_text(' ', strip=True))
+                      hlow = heading.lower()
+                      if any(hlow == s or hlow.startswith(s + ' ') for s in STOP_HEADINGS):
+                          break
+                      if heading and hlow not in IGNORE_HEADINGS and not BAD.search(heading):
+                          section = heading
+                      continue
+
+                  candidates = []
+                  if node.name == 'li':
+                      candidates = [direct_text_without_nested_lists(node)]
+                  elif node.name == 'p':
+                      if node.find_parent(['li', 'td', 'th']):
+                          continue
+                      candidates = [clean(node.get_text(' ', strip=True))]
+                  elif node.name == 'tr':
+                      cells = node.find_all(['td', 'th'], recursive=False)
+                      if len(cells) >= 2:
+                          candidates = [clean(cells[-1].get_text(' ', strip=True))]
+
+                  for text in candidates:
+                      if not useful_instruction(text):
+                          continue
+                      key = re.sub(r'\s+', ' ', text.casefold())
+                      if key in seen:
+                          continue
+                      seen.add(key)
+                      out.append({'section': section or 'Walkthrough', 'text': text})
+
+              return out[:260]
+
+          def iter_after_heading(soup, names):
+              names = tuple(x.lower() for x in names)
+              for h in soup.find_all(['h2', 'h3']):
+                  label = clean(h.get_text(' ', strip=True)).lower()
+                  if label in names:
+                      level = int(h.name[1])
                       for node in h.find_all_next():
-                          if isinstance(node,Tag) and node.name in ('h2','h3') and int(node.name[1]) <= level:
+                          if isinstance(node, Tag) and node.name in ('h2', 'h3') and int(node.name[1]) <= level:
                               break
                           yield node
                       return
 
-          def parse_walkthrough(markup):
-              soup=safe_soup(markup)
-              if soup is None: return []
-              root=None
-              for h in soup.find_all(['h1','h2','h3']):
-                  label=clean(h.get_text(' ',strip=True)).lower()
-                  if label == 'walkthrough' or label.startswith('walkthrough '): root=h; break
-              container=root.find_parent(class_='mw-parser-output') if root else soup.find(class_='mw-parser-output')
-              if container is None: container=soup
-              nodes=root.find_all_next() if root else container.descendants
-              steps=[]; section='Walkthrough'; started=root is None
-              for node in nodes:
-                  if not isinstance(node,Tag): continue
-                  if root and node is root: started=True; continue
-                  if not started: continue
-                  if node.name=='h2':
-                      t=clean(node.get_text(' ',strip=True))
-                      if t.lower().startswith(('rewards','required for completing','changes','references','transcript','navigation','music unlocked')): break
-                      if t: section=t
-                  elif node.name=='h3':
-                      t=clean(node.get_text(' ',strip=True))
-                      if t: section=t
-                  elif node.name=='li':
-                      text=direct_li_text(node)
-                      if text and len(text)>=8 and not BAD.search(text):
-                          key=(section.lower(),text.lower())
-                          if not any((x['section'].lower(),x['text'].lower())==key for x in steps[-10:]):
-                              steps.append({'section':section,'text':text})
-              return steps
-
           def parse_rewards(markup):
-              soup=safe_soup(markup)
-              if soup is None: return []
-              rewards=[]
-              # OSRS Wiki uses both "Reward" and "Rewards" headings depending on the quest.
-              for target_heading in ('rewards','reward'):
-                  for node in iter_after_heading(soup,target_heading) or []:
-                      if isinstance(node,Tag) and node.name=='li':
-                          t=direct_li_text(node)
-                          if t and len(t)>1: rewards.append(t)
-                      elif isinstance(node,Tag) and node.name=='p' and not rewards:
-                          t=clean(node.get_text(' ',strip=True))
-                          if t: rewards.append(t)
-                  if rewards:
-                      return dedupe(rewards)
-              # Infobox/table fallback.
+              soup = safe_soup(markup)
+              if soup is None:
+                  return []
+              rewards = []
+              for node in iter_after_heading(soup, ('rewards', 'reward')) or []:
+                  if not isinstance(node, Tag):
+                      continue
+                  if node.name == 'li':
+                      t = direct_text_without_nested_lists(node)
+                      if t:
+                          rewards.append(t)
+                  elif node.name == 'p' and not rewards and not node.find_parent('li'):
+                      t = clean(node.get_text(' ', strip=True))
+                      if t:
+                          rewards.append(t)
+              return dedupe(rewards)
+
+          def parse_labeled_row(markup, labels):
+              soup = safe_soup(markup)
+              if soup is None:
+                  return []
+              labels = tuple(x.lower() for x in labels)
               for tr in soup.find_all('tr'):
-                  cells=tr.find_all(['th','td'],recursive=False)
-                  if len(cells)>=2 and clean(cells[0].get_text(' ',strip=True)).lower().startswith(('reward','rewards')):
-                      vals=[direct_li_text(li) for li in cells[1].find_all('li')]
+                  cells = tr.find_all(['th', 'td'], recursive=False)
+                  if len(cells) < 2:
+                      continue
+                  label = clean(cells[0].get_text(' ', strip=True)).lower().rstrip(':')
+                  if any(label == x or label.startswith(x + ' ') for x in labels):
+                      vals = [direct_text_without_nested_lists(li) for li in cells[1].find_all('li')]
                       if not vals:
-                          vals=[clean(cells[1].get_text(' ',strip=True))]
+                          vals = [clean(cells[1].get_text(' ', strip=True))]
                       return dedupe(vals)
               return []
 
           def parse_items(markup):
-              soup=safe_soup(markup)
-              if soup is None: return []
-              for tr in soup.find_all('tr'):
-                  cells=tr.find_all(['th','td'],recursive=False)
-                  if len(cells)>=2 and clean(cells[0].get_text(' ',strip=True)).lower().startswith('items required'):
-                      vals=[direct_li_text(li) for li in cells[1].find_all('li')]
-                      if not vals: vals=[clean(cells[1].get_text(' ',strip=True))]
-                      return dedupe(vals)
-              return []
+              return parse_labeled_row(markup, ('items required', 'items needed', 'items'))
+
+          def parse_start(markup):
+              vals = parse_labeled_row(markup, ('start point', 'start', 'starting point'))
+              return vals[0] if vals else ''
+
+          def parse_places(markup):
+              return parse_labeled_row(markup, ('locations', 'location'))
 
           def quality(steps):
-              if not steps: return 0
-              text=' '.join(x.get('text','') for x in steps)
-              score=min(len(steps),8)*10 + min(len(text)//100,30)
-              if len(steps)>=4: score+=20
-              if len(text)>=350: score+=20
-              if ACTION.search(text): score+=10
-              if len(steps)==1 and len(text)<120: score-=50
+              if not steps:
+                  return 0
+              text = ' '.join(x.get('text','') for x in steps)
+              score = min(len(steps), 12) * 8
+              score += min(len(text) // 120, 30)
+              if len(steps) >= 5:
+                  score += 20
+              if len(text) >= 500:
+                  score += 20
+              if ACTION.search(text):
+                  score += 10
+              if len(steps) <= 1 and len(text) < 160:
+                  score -= 80
               return score
 
           def java_unescape(raw):
@@ -1505,295 +1644,286 @@ jobs:
                   return raw
 
           def split_java_statements(text):
-              """Split Java source into semicolon-terminated statements without breaking inside quoted strings."""
-              out=[]; buf=[]; in_str=False; esc=False
+              out, buf, in_str, esc = [], [], False, False
               for ch in text:
                   buf.append(ch)
                   if in_str:
                       if esc:
-                          esc=False
-                      elif ch=='\\':
-                          esc=True
-                      elif ch=='"':
-                          in_str=False
+                          esc = False
+                      elif ch == '\\':
+                          esc = True
+                      elif ch == '"':
+                          in_str = False
                   else:
-                      if ch=='"':
-                          in_str=True
-                      elif ch==';':
-                          out.append(''.join(buf)); buf=[]
+                      if ch == '"':
+                          in_str = True
+                      elif ch == ';':
+                          out.append(''.join(buf))
+                          buf = []
               if buf:
                   out.append(''.join(buf))
               return out
 
           def qh_candidates(title):
-              if not QH_ROOT.exists(): return []
-              norm=lambda x: re.sub(r'[^a-z0-9]','',x.lower())
-              target=norm(title)
-              all_files=list(QH_ROOT.rglob('*.java'))
-              scored=[]
-              words=[w for w in re.findall(r'[a-z0-9]+',title.lower()) if len(w)>2 and w not in ('the','and','of','a','an')]
-              for p in all_files:
-                  rel=norm(str(p.relative_to(QH_ROOT)))
-                  stem=norm(p.stem)
-                  score=0
-                  if target and stem==target: score+=100
-                  if target and target in rel: score+=60
-                  score += 10*sum(w in str(p).lower() for w in words)
-                  if score: scored.append((score,p))
-              scored.sort(key=lambda x:(-x[0],len(str(x[1]))))
-              return [p for _,p in scored[:12]]
+              if not QH_ROOT.exists():
+                  return []
+              norm = lambda x: re.sub(r'[^a-z0-9]', '', x.lower())
+              target = norm(title)
+              words = [w for w in re.findall(r'[a-z0-9]+', title.lower()) if len(w) > 2 and w not in ('the','and','of','a','an')]
+              scored = []
+              for p in QH_ROOT.rglob('*.java'):
+                  rel = norm(str(p.relative_to(QH_ROOT)))
+                  stem = norm(p.stem)
+                  score = 0
+                  if target and stem == target:
+                      score += 120
+                  if target and target in rel:
+                      score += 70
+                  score += 8 * sum(w in str(p).lower() for w in words)
+                  if score:
+                      scored.append((score, p))
+              scored.sort(key=lambda x: (-x[0], len(str(x[1]))))
+              return [p for _, p in scored[:10]]
 
           def qh_steps(title):
-              """Extract actual RuneLite Quest Helper step constructor text, in source order."""
-              out=[]; seen=set()
-              step_ctor=re.compile(r'new\s+[A-Za-z0-9_]*(?:Quest)?Step\s*\(', re.I)
-              string_re=re.compile(r'"((?:\\.|[^"\\])*)"')
+              out, seen = [], set()
+              step_ctor = re.compile(r'new\s+[A-Za-z0-9_]*(?:Quest)?Step\s*\(', re.I)
+              string_re = re.compile(r'"((?:\\.|[^"\\])*)"')
+              norm = lambda x: re.sub(r'[^a-z0-9]', '', x.lower())
+              target = norm(title)
+
               for p in qh_candidates(title):
-                  try: text=p.read_text(encoding='utf-8',errors='ignore')
-                  except Exception: continue
-                  # setupSteps is where the ordered quest instructions are declared.
-                  m=re.search(r'\b(?:public|protected)\s+void\s+setupSteps\s*\(\s*\)\s*\{', text)
-                  region=text[m.start():] if m else text
+                  try:
+                      text = p.read_text(encoding='utf-8', errors='ignore')
+                  except Exception:
+                      continue
+                  rel = norm(str(p.relative_to(QH_ROOT)))
+                  stem = norm(p.stem)
+                  if target not in rel and stem != target:
+                      continue
+
+                  m = re.search(r'\b(?:public|protected)\s+void\s+setupSteps\s*\(\s*\)\s*\{', text)
+                  region = text[m.start():] if m else text
                   for stmt in split_java_statements(region):
                       if not step_ctor.search(stmt):
                           continue
-                      strings=[clean(java_unescape(x)) for x in string_re.findall(stmt)]
-                      # Constructor statements may contain unrelated short labels/item names before the instruction.
-                      candidates=[]
-                      for t in strings:
-                          if 8 <= len(t) <= 700 and not BAD.search(t):
-                              # Prefer instruction-like prose, but keep clear sentence text even if the verb list misses it.
-                              if ACTION.search(t) or len(t)>=28 or t.endswith('.'):
-                                  candidates.append(t)
-                      if not candidates:
+                      strings = [clean(java_unescape(x)) for x in string_re.findall(stmt)]
+                      prose = [t for t in strings if 8 <= len(t) <= 700 and useful_instruction(t)]
+                      if not prose:
                           continue
-                      # Usually the longest prose string is the actual QuestStep instruction.
-                      t=max(candidates,key=len)
-                      key=t.lower()
-                      if key not in seen:
-                          seen.add(key)
+                      t = max(prose, key=len)
+                      k = t.casefold()
+                      if k not in seen:
+                          seen.add(k)
                           out.append({'section':'RuneLite Quest Helper','text':t})
-                  if len(out)>=5:
-                      # A matching quest class with real setupSteps data has been found.
+                  if len(out) >= 3:
                       break
-              return out[:160]
+              return out[:200]
 
           def qh_rewards(title):
-              """Extract quest rewards directly from RuneLite Quest Helper source."""
-              rewards=[]
+              rewards = []
+              norm = lambda x: re.sub(r'[^a-z0-9]', '', x.lower())
+              target = norm(title)
               for p in qh_candidates(title):
-                  try: text=p.read_text(encoding='utf-8',errors='ignore')
-                  except Exception: continue
+                  try:
+                      text = p.read_text(encoding='utf-8', errors='ignore')
+                  except Exception:
+                      continue
+                  rel = norm(str(p.relative_to(QH_ROOT)))
+                  stem = norm(p.stem)
+                  if target not in rel and stem != target:
+                      continue
                   for n in re.findall(r'new\s+QuestPointReward\s*\(\s*(\d+)\s*\)', text):
-                      rewards.append(f'{n} Quest point' + ('' if n=='1' else 's'))
-                  for skill,amount in re.findall(r'new\s+ExperienceReward\s*\(\s*Skill\.([A-Z_]+)\s*,\s*([0-9_]+)', text):
+                      rewards.append(f'{n} Quest point' + ('' if n == '1' else 's'))
+                  for skill, amount in re.findall(r'new\s+ExperienceReward\s*\(\s*Skill\.([A-Z_]+)\s*,\s*([0-9_]+)', text):
                       rewards.append(f'{int(amount.replace("_","")):,} {skill.replace("_"," ").title()} experience')
-                  for name,qty in re.findall(r'new\s+ItemReward\s*\(\s*"((?:\\.|[^"\\])+)"\s*,[^,\n]+,\s*([0-9_]+)\s*\)', text):
-                      name=clean(java_unescape(name)); q=int(qty.replace('_',''))
-                      rewards.append((f'{q:,} × ' if q!=1 else '') + name)
+                  for name, qty in re.findall(r'new\s+ItemReward\s*\(\s*"((?:\\.|[^"\\])+)"\s*,[^,\n]+,\s*([0-9_]+)\s*\)', text):
+                      item = clean(java_unescape(name))
+                      q = int(qty.replace('_',''))
+                      rewards.append((f'{q:,} × ' if q != 1 else '') + item)
                   for val in re.findall(r'new\s+UnlockReward\s*\(\s*"((?:\\.|[^"\\])+)"\s*\)', text):
                       rewards.append(clean(java_unescape(val)))
-                  if rewards: break
+                  if rewards:
+                      break
               return dedupe(rewards)
 
-          def good_seed_steps(q):
-              out=[]
-              for s in q.get('steps',[]):
-                  t=clean(s if isinstance(s,str) else s.get('text',''))
-                  sec='Quest Helper' if isinstance(s,str) else clean(s.get('section','Quest Helper')) or 'Quest Helper'
-                  if t and not BAD.search(t): out.append({'section':sec,'text':t})
+          def seed_steps(seed):
+              out = []
+              for s in seed.get('steps', []) if seed else []:
+                  text = clean(s if isinstance(s, str) else s.get('text',''))
+                  section = 'Quest Helper' if isinstance(s, str) else clean(s.get('section','Quest Helper')) or 'Quest Helper'
+                  if useful_instruction(text):
+                      out.append({'section':section, 'text':text})
               return out
 
           def patch_cooks(q):
-              q['name']="Cook's Assistant"
-              q['items']=['Egg (obtainable during the quest)','Bucket of milk (bring a bucket if collecting it yourself)','Pot of flour (bring a pot if making it yourself)']
-              q['places']=['Lumbridge Castle kitchen','Lumbridge cow field','Chicken farm north-west of the cow field','Mill Lane Mill and nearby wheat field']
-              q['start']='Talk to the Cook in the kitchen on the ground floor of Lumbridge Castle.'
-              q['steps']=[
+              q['name'] = "Cook's Assistant"
+              q['items'] = ['Egg (obtainable during the quest)','Bucket of milk (bring a bucket if collecting it yourself)','Pot of flour (bring a pot if making it yourself)']
+              q['places'] = ['Lumbridge Castle kitchen','Lumbridge cow field','Chicken farm north-west of the cow field','Mill Lane Mill and nearby wheat field']
+              q['start'] = 'Talk to the Cook in the kitchen on the ground floor of Lumbridge Castle.'
+              q['steps'] = [
                   {'section':'Getting started','text':'Talk to the Cook in Lumbridge Castle kitchen and agree to help. He needs an egg, a bucket of milk, and a pot of flour.'},
-                  {'section':'Prepare containers','text':'If collecting the ingredients yourself, take an empty pot from the kitchen and obtain an empty bucket.'},
                   {'section':'Get the egg','text':'Travel north from Lumbridge to the chicken farm and pick up an egg.'},
                   {'section':'Get the milk','text':'Go to the Lumbridge cow field with an empty bucket and use it on a dairy cow to receive a bucket of milk.'},
                   {'section':'Make the flour','text':'Go to the wheat field beside Mill Lane Mill and pick grain.'},
                   {'section':'Make the flour','text':'Enter Mill Lane Mill and climb the ladders to the top floor.'},
-                  {'section':'Make the flour','text':'Use the grain on the hopper, then pull or operate the hopper controls/lever to grind the grain.'},
-                  {'section':'Make the flour','text':'Climb back down to the ground floor and, with an empty pot, empty the flour bin to receive a pot of flour.'},
+                  {'section':'Make the flour','text':'Use the grain on the hopper, then pull or operate the hopper controls to grind the grain.'},
+                  {'section':'Make the flour','text':'Climb back down to the ground floor and use an empty pot on the flour bin to receive a pot of flour.'},
                   {'section':'Finish','text':'Return to the Cook in Lumbridge Castle kitchen with all three ingredients and speak to him to complete the quest.'}
               ]
-              if not q.get('rewards'): q['rewards']=['1 Quest point','300 Cooking experience','Permission to use the Cook-o-matic 100 range in Lumbridge Castle']
+              q['rewards'] = ['1 Quest point','300 Cooking experience','Permission to use the Cook-o-matic 100 range in Lumbridge Castle']
               return q
 
           def patch_black_knights(q):
-              # Deterministic verified fallback so this quest is complete even if live sources are unavailable.
               q['name'] = "Black Knights' Fortress"
-              q['items'] = [
-                  'Cabbage (must NOT be from Draynor Manor)',
-                  'Iron chainbody',
-                  'Bronze med helm'
-              ]
-              q['places'] = [
-                  "White Knights' Castle in Falador",
-                  "Black Knights' Fortress",
-                  'Edgeville Monastery cabbage patch (optional cabbage source)'
-              ]
+              q['items'] = ['Cabbage (must NOT be from Draynor Manor)','Iron chainbody','Bronze med helm']
+              q['places'] = ["White Knights' Castle in Falador","Black Knights' Fortress"]
               q['start'] = "Speak to Sir Amik Varze on the upper floor of the western tower of White Knights' Castle in Falador. You need 12 Quest points to start."
               q['steps'] = [
-                  {'section':'Starting the quest','text':"Talk to Sir Amik Varze in the western tower of White Knights' Castle in Falador. Ask for a quest and agree to spy on the Black Knights. Read the dossier he gives you if it is placed in your inventory."},
-                  {'section':'Prepare the disguise','text':'Bring an iron chainbody, a bronze med helm, and a cabbage that was not picked at Draynor Manor. Food and a Falador teleport are useful but optional.'},
-                  {'section':'Enter the fortress','text':"Travel to Black Knights' Fortress, north-east of Falador and west of the Monastery. Equip the iron chainbody and bronze med helm, then enter through the sturdy door on the south side of the fortress."},
+                  {'section':'Start','text':"Talk to Sir Amik Varze in the western tower of White Knights' Castle in Falador and agree to spy on the Black Knights."},
+                  {'section':'Disguise','text':'Bring an iron chainbody, a bronze med helm, and a cabbage that was not picked at Draynor Manor.'},
+                  {'section':'Enter the fortress','text':"Travel to Black Knights' Fortress, equip the iron chainbody and bronze med helm, and enter through the sturdy door on the south side."},
                   {'section':'Reach the listening point','text':'Push through the wall directly in front of you after entering, then climb up the ladder twice.'},
-                  {'section':'Reach the listening point','text':'Climb down the ladder to the south, go through the eastern door, and climb up the ladder.'},
-                  {'section':'Reach the listening point','text':'Climb down the eastern ladder, go south through the door, then climb down the next ladder.'},
-                  {'section':'Spy on the Black Knights','text':'At the eastern wall, use the Listen-at option on the grill and let the conversation finish. You learn that an ordinary cabbage will ruin the secret potion.'},
-                  {'section':'Return to the entrance','text':'Retrace your route back to the fortress entrance area.'},
-                  {'section':'Reach the cabbage hole','text':"Go through the eastern door into the dining area. Finish the conversation with the guard and choose to go in anyway. Run north, climb up the ladder, run east and then south, and push through the wall."},
-                  {'section':'Sabotage the potion','text':'Use the cabbage on the hole. Do not eat the cabbage. Your character will confirm that the potion has been ruined.'},
-                  {'section':'Finish the quest','text':"Return to Falador and talk to Sir Amik Varze in the western tower of White Knights' Castle to complete the quest."}
+                  {'section':'Reach the listening point','text':'Climb down the ladder to the south, go through the eastern door, climb up the ladder, climb down the eastern ladder, go south through the door, then climb down the next ladder.'},
+                  {'section':'Spy','text':'Use Listen-at on the grill in the eastern wall and let the conversation finish.'},
+                  {'section':'Reach the cabbage hole','text':'Return toward the entrance, enter the dining area through the eastern door, continue past the guard, climb the ladder, run east and south, then push through the wall.'},
+                  {'section':'Sabotage the potion','text':'Use the cabbage on the hole. Do not eat it.'},
+                  {'section':'Finish','text':"Return to Falador and talk to Sir Amik Varze to complete the quest."}
               ]
               q['rewards'] = ['3 Quest points','2,500 coins']
-              q['sourceNote'] = "Black Knights' Fortress uses a built-in verified OSRS walkthrough and reward fallback so it remains complete when live source enrichment is unavailable."
               return q
 
-          data=json.loads(SRC.read_text(encoding='utf-8'))
-          rebuilt=[]; audit=[]
-          counts={'wiki':0,'runelite':0,'seed':0,'weak':0,'missing_rewards':0}
+          seeds = seed_index()
+          titles = canonical_quest_titles()
 
-          for idx,q0 in enumerate(data,1):
-              q=dict(q0)
-              title=NAME_FIX.get(q.get('name',''),q.get('name','')).strip()
-              q['name']=title
-              q.pop('wikiUrl',None); q.pop('source',None)
-              canonical,quick,full=fetch_wiki(title)
-              if canonical: q['name']=canonical
+          rebuilt = []
+          audit = []
+          review = []
+          sources = {'wiki_quick':0, 'wiki_full':0, 'runelite':0, 'seed':0}
 
-              quick_steps=parse_walkthrough(quick) if quick else []
-              full_steps=parse_walkthrough(full) if full else []
-              runelite=qh_steps(q['name'])
-              seed=good_seed_steps(q)
+          for idx, title in enumerate(titles, 1):
+              key = title_key(title)
+              seed = seeds.get(key, {})
+              quick, full = exact_wiki_pages(title)
 
-              # RuneLite Quest Helper is the primary detailed source because its source files encode
-              # the quest's ordered NPC/object/tile interactions. The Wiki quick guide is used when
-              # it is more complete, and the embedded seed is only a final fallback.
-              choices=[
-                  ('RuneLite Quest Helper', runelite),
+              quick_steps = parse_walkthrough(quick) if quick else []
+              full_steps = parse_walkthrough(full)
+              runelite_steps = qh_steps(title)
+              fallback_steps = seed_steps(seed)
+
+              choices = [
                   ('OSRS Wiki quick guide', quick_steps),
                   ('OSRS Wiki full guide', full_steps),
-                  ('embedded Quest Helper seed', seed),
+                  ('RuneLite Quest Helper', runelite_steps),
+                  ('embedded matching seed', fallback_steps),
               ]
-              source,best=max(choices,key=lambda pair:quality(pair[1]))
+              source, steps = max(choices, key=lambda pair: quality(pair[1]))
 
-              # If RuneLite is already detailed, prefer it over a slightly higher-scoring Wiki parse;
-              # this avoids wiki navigation/formatting fragments being mistaken for quest steps.
-              if quality(runelite)>=70 and len(runelite)>=4:
-                  source,best='RuneLite Quest Helper',runelite
+              if len(quick_steps) >= 3 and quality(quick_steps) >= 55:
+                  source, steps = 'OSRS Wiki quick guide', quick_steps
+              elif len(runelite_steps) >= 4 and quality(runelite_steps) >= quality(steps) - 10:
+                  source, steps = 'RuneLite Quest Helper', runelite_steps
 
-              q['steps']=best
-              if source=='OSRS Wiki': counts['wiki']+=1
-              elif source=='RuneLite Quest Helper': counts['runelite']+=1
-              else: counts['seed']+=1
+              items = parse_items(quick) or parse_items(full) or dedupe(seed.get('items', []))
+              places = parse_places(full) or dedupe(seed.get('places', []))
+              start = parse_start(full) or parse_start(quick) or clean(seed.get('start',''))
+              rewards = parse_rewards(full) or parse_rewards(quick) or qh_rewards(title) or dedupe(seed.get('rewards', []))
 
-              items=parse_items(quick) or parse_items(full) or q.get('items',[])
-              q['items']=dedupe(items)
-              q['places']=dedupe(q.get('places',[]))
-              rewards=qh_rewards(q['name']) or parse_rewards(full) or parse_rewards(quick) or dedupe(q.get('rewards',[]))
-              q['rewards']=dedupe(rewards)
+              q = {
+                  'name': title,
+                  'items': items,
+                  'places': places,
+                  'start': start,
+                  'steps': steps,
+                  'rewards': rewards,
+              }
 
-              if q['steps']:
-                  existing=clean(q.get('start',''))
-                  q['start']=existing if existing and not BAD.search(existing) else q['steps'][0]['text']
+              if title_key(title) == title_key("Cook's Assistant"):
+                  q = patch_cooks(q)
+                  source = 'verified built-in correction'
+              if title_key(title) == title_key("Black Knights' Fortress"):
+                  q = patch_black_knights(q)
+                  source = 'verified built-in correction'
+
+              score = quality(q['steps'])
+              chars = sum(len(s.get('text','')) for s in q['steps'])
+              complete = (
+                  len(q['steps']) >= 2 and
+                  chars >= 140 and
+                  score >= 40 and
+                  bool(q['rewards']) and
+                  bool(q['start'])
+              )
+
+              if not complete:
+                  review.append(
+                      f'{title} | source={source} | steps={len(q["steps"])} | chars={chars} | '
+                      f'score={score} | rewards={len(q["rewards"])} | start={"yes" if q["start"] else "no"}'
+                  )
+
+              audit.append([
+                  title, source, len(q['steps']), chars, score,
+                  len(q['items']), len(q['rewards']), 'OK' if complete else 'REVIEW'
+              ])
+
+              if source.startswith('OSRS Wiki quick'):
+                  sources['wiki_quick'] += 1
+              elif source.startswith('OSRS Wiki full'):
+                  sources['wiki_full'] += 1
+              elif source.startswith('RuneLite'):
+                  sources['runelite'] += 1
               else:
-                  q['start']=''
+                  sources['seed'] += 1
 
-              if q['name'].lower().replace("'",'') == 'cooks assistant': q=patch_cooks(q)
-              black_key = re.sub(r'[^a-z0-9]', '', q.get('name','').lower())
-              if black_key in ('blackknightfortress','blackknightsfortress'):
-                  q=patch_black_knights(q)
-
-              # Every quest page must expose a rewards section. Live OSRS Wiki data is preferred;
-              # if a source is temporarily unavailable, preserve a clear audit marker instead of silently omitting it.
-              if not q.get('rewards'):
-                  q['rewards']=['Reward data could not be verified during this build; see guide-audit.csv and rebuild when OSRS Wiki is reachable.']
-
-              score=quality(q['steps'])
-              if score<45: counts['weak']+=1
-              if not q['rewards']: counts['missing_rewards']+=1
-              q['sourceNote']=f'Guide assembled from {source}; OSRS Wiki and RuneLite data are cross-checked where available. Quality score: {score}.'
-              status='OK' if (len(q['steps'])>=3 and score>=45 and q.get('rewards')) else 'REVIEW'
-              audit.append([q['name'],source,len(q['steps']),score,len(q['rewards']),status])
               rebuilt.append(q)
-              if idx%20==0: print(f'Processed {idx}/{len(data)} quests...')
-              time.sleep(0.04)
 
-          review_rows=[r for r in audit if r[-1]=='REVIEW']
-          Path('questmate-complete/guide-review-needed.txt').write_text(
-              '\n'.join(f'{r[0]} | source={r[1]} | steps={r[2]} | score={r[3]} | rewards={r[4]}' for r in review_rows) or 'All quest entries passed the minimum completeness gate.',
-              encoding='utf-8')
+              if idx % 20 == 0:
+                  print(f'Processed {idx}/{len(titles)} canonical quests...')
+              time.sleep(0.03)
 
-          rebuilt.sort(key=lambda x:x.get('name','').lower())
-          OUT.write_text(json.dumps(rebuilt,ensure_ascii=False,separators=(',',':')),encoding='utf-8')
-          with AUDIT.open('w',newline='',encoding='utf-8') as f:
-              w=csv.writer(f); w.writerow(['quest','primary_source','step_count','quality_score','reward_count','status']); w.writerows(audit)
+          names = [q['name'] for q in rebuilt]
+          if len(names) != len(set(n.casefold() for n in names)):
+              raise RuntimeError('Duplicate quest names detected after canonical rebuild.')
+
+          banned = {'Gender','Crate','Combat Achievements','Player characters','Non-player characters'}
+          leaked = sorted(set(names) & banned)
+          if leaked:
+              raise RuntimeError(f'Non-quest pages leaked into quest database: {leaked}')
+
+          REVIEW.write_text(
+              '\n'.join(review) if review else 'All canonical OSRS quest entries passed the completeness gate.',
+              encoding='utf-8'
+          )
+
+          rebuilt.sort(key=lambda x: x['name'].casefold())
+          OUT.write_text(json.dumps(rebuilt, ensure_ascii=False, separators=(',',':')), encoding='utf-8')
+
+          with AUDIT.open('w', newline='', encoding='utf-8') as f:
+              w = csv.writer(f)
+              w.writerow(['quest','primary_source','step_count','walkthrough_chars','quality_score','item_count','reward_count','status'])
+              w.writerows(audit)
+
           REPORT.write_text(
-              'QuestMate guide build report\n'
-              f'Total entries: {len(rebuilt)}\n'
-              f'OSRS Wiki primary guides: {counts["wiki"]}\n'
-              f'RuneLite Quest Helper primary guides: {counts["runelite"]}\n'
-              f'Embedded seed fallbacks: {counts["seed"]}\n'
-              f'Guides flagged for manual review: {counts["weak"]}\n'
-              f'Entries missing parsed rewards: {counts["missing_rewards"]}\n'
-              'Every entry was individually scored for step count/detail and RuneLite rewards were parsed when available. See guide-audit.csv for the per-quest result.\n'
-              'No external wiki links are stored in quests.json.\n', encoding='utf-8')
+              'QuestMate v12 canonical quest build report\n'
+              f'Canonical OSRS quest count: {len(rebuilt)}\n'
+              f'OSRS Wiki quick-guide primary: {sources["wiki_quick"]}\n'
+              f'OSRS Wiki full-guide primary: {sources["wiki_full"]}\n'
+              f'RuneLite Quest Helper primary: {sources["runelite"]}\n'
+              f'Matching seed fallback primary: {sources["seed"]}\n'
+              f'Entries flagged for review: {len(review)}\n'
+              'Quest membership comes only from the official OSRS Quests/List tables. '
+              'Miniquests, achievement diaries, wiki pages, objects, puzzles and navigation pages cannot create app entries.\n'
+              'Exact canonical wiki titles are used; fuzzy MediaWiki search is disabled.\n',
+              encoding='utf-8'
+          )
+
           print(REPORT.read_text())
           PYEOF
 
           rm -rf /tmp/quest-helper
           git clone --depth 1 https://github.com/Zoinkwiz/quest-helper.git /tmp/quest-helper >/dev/null 2>&1 || echo 'RuneLite Quest Helper clone unavailable; continuing with OSRS Wiki + seed data.'
 
-          if ! python3 /tmp/enrich_quests.py; then
-            echo 'WARNING: live guide enrichment failed; applying offline-safe quest database patches.'
-            cp questmate-complete/app/src/main/assets/quests_seed.json questmate-complete/app/src/main/assets/quests.json
-            python3 - <<'PYFALLBACK'
-          import json,re
-          from pathlib import Path
-          p=Path('questmate-complete/app/src/main/assets/quests.json')
-          data=json.loads(p.read_text())
-          for q in data:
-              q.pop('wikiUrl',None); q.pop('source',None)
-              if not q.get('rewards'):
-                  q['rewards']=['Reward data could not be verified during this build; rebuild when OSRS Wiki is reachable.']
-              key=re.sub(r'[^a-z0-9]','',q.get('name','').lower())
-              if key in ('blackknightfortress','blackknightsfortress'):
-                  q['name']="Black Knights' Fortress"
-                  q['items']=['Cabbage (must NOT be from Draynor Manor)','Iron chainbody','Bronze med helm']
-                  q['places']=["White Knights' Castle in Falador","Black Knights' Fortress",'Edgeville Monastery cabbage patch (optional cabbage source)']
-                  q['start']="Speak to Sir Amik Varze on the upper floor of the western tower of White Knights' Castle in Falador. You need 12 Quest points to start."
-                  q['steps']=[
-                    {'section':'Starting the quest','text':"Talk to Sir Amik Varze in the western tower of White Knights' Castle in Falador. Ask for a quest and agree to spy on the Black Knights."},
-                    {'section':'Prepare the disguise','text':'Bring an iron chainbody, a bronze med helm, and a cabbage that was not picked at Draynor Manor.'},
-                    {'section':'Enter the fortress','text':"Travel to Black Knights' Fortress. Equip the iron chainbody and bronze med helm, then enter through the sturdy door on the south side."},
-                    {'section':'Reach the listening point','text':'Push through the wall directly in front of you and climb up the ladder twice.'},
-                    {'section':'Reach the listening point','text':'Climb down the ladder to the south, go through the eastern door, climb up the ladder, climb down the eastern ladder, go south through the door, then climb down the next ladder.'},
-                    {'section':'Spy on the Black Knights','text':'Use Listen-at on the grill in the eastern wall and let the conversation finish.'},
-                    {'section':'Return to the entrance','text':'Retrace your route back to the fortress entrance area.'},
-                    {'section':'Reach the cabbage hole','text':'Go through the eastern door into the dining area, finish the guard conversation, run north, climb up the ladder, run east and south, then push through the wall.'},
-                    {'section':'Sabotage the potion','text':'Use the cabbage on the hole. Do not eat it.'},
-                    {'section':'Finish the quest','text':"Return to Falador and talk to Sir Amik Varze to complete the quest."}
-                  ]
-                  q['rewards']=['3 Quest points','2,500 coins']
-          p.write_text(json.dumps(data,ensure_ascii=False,separators=(',',':')))
-          PYFALLBACK
-            cat > questmate-complete/guide-build-report.txt <<'REPORT'
-          QuestMate guide build report
-          Live source enrichment failed safely during CI.
-          The APK was built using the embedded Quest Helper seed database and manual quest corrections.
-          Rewards may be incomplete in this emergency fallback build.
-          No external wiki links are required by the app.
-          REPORT
-            cat > questmate-complete/guide-audit.csv <<'AUDIT'
-          quest,primary_source,step_count,quality_score,reward_count,status
-          FALLBACK,embedded Quest Helper seed,0,0,0,REVIEW
-          AUDIT
-          fi
+          python3 /tmp/enrich_quests.py
           rm questmate-complete/app/src/main/assets/quests_seed.json
 
           cat > questmate-complete/app/src/main/java/com/questmate/complete/MainActivity.java <<'EOF'
@@ -1915,11 +2045,6 @@ jobs:
                   if (q.steps.isEmpty()) p.addView(tv("No verified walkthrough text was available in this build.",17,MUTED,false));
 
                   if (!q.rewards.isEmpty()) { p.addView(heading("Quest Rewards")); addBullets(p,q.rewards); }
-
-                  if (q.sourceNote!=null && !q.sourceNote.isEmpty()) {
-                      p.addView(heading("Guide Data"));
-                      p.addView(tv(q.sourceNote,14,MUTED,false));
-                  }
                   setContentView(scroll(p));
               }
 
