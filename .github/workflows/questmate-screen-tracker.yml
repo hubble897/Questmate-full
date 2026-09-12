@@ -1,4 +1,4 @@
-name: Build QuestMate Complete - Detailed Guides + Defence Labels v12
+name: Build QuestMate Complete - Maximum Detail Guides v14
 
 on:
   workflow_dispatch:
@@ -81,40 +81,19 @@ jobs:
               namespace 'com.questmate.complete'
               compileSdk 35
 
-              signingConfigs {
-                  stable {
-                      storeFile rootProject.file('questmate-stable.jks')
-                      storePassword 'questmate2026'
-                      keyAlias 'questmate'
-                      keyPassword 'questmate2026'
-                  }
-              }
-
               defaultConfig {
-                  // New package ID avoids the signature conflict with older QuestMate APKs.
-                  // Keep this applicationId in all future versions so v14+ can update normally.
-                  applicationId 'com.questmate.complete.stable'
+                  applicationId 'com.questmate.complete'
                   minSdk 26
                   targetSdk 35
                   versionCode 14
-                  versionName '14.0-stable-install-fix'
-              }
-
-              buildTypes {
-                  debug {
-                      signingConfig signingConfigs.stable
-                  }
-                  release {
-                      signingConfig signingConfigs.stable
-                      minifyEnabled false
-                  }
+                  versionName '14.0-maximum-detail-no-placeholders'
               }
           }
           EOF
 
           cat > questmate-complete/app/src/main/res/values/strings.xml <<'EOF'
           <resources>
-              <string name="app_name">QuestMate Complete v14</string>
+              <string name="app_name">QuestMate Complete</string>
           </resources>
           EOF
 
@@ -1337,7 +1316,8 @@ jobs:
               'Accept-Language': 'en-AU,en;q=0.9'
           })
 
-          BAD = re.compile(r'(?i)not yet implemented|unknown|relevant npc|relevant location|placeholder|wiki reference|https?://')
+          BAD = re.compile(r'(?i)not yet implemented|unknown|relevant npc|relevant location|placeholder|wiki reference|https?://|\bdo step\b|\bcomplete this step\b|\bfollow the step\b|\bcontinue the quest\b|\bfinish this section\b')
+          GENERIC = re.compile(r'(?i)^\s*(?:do|complete|perform|finish|continue)\s+(?:the\s+)?(?:next\s+)?step\s*\.?\s*$|^\s*solve\s+(?:the\s+)?puzzle\s*\.?\s*$')
           SPACE = re.compile(r'\s+')
           ACTION = re.compile(r'(?i)\b(talk|speak|go|travel|walk|run|enter|leave|climb|use|take|pick|collect|give|return|kill|fight|search|open|close|pull|push|operate|equip|wear|buy|bring|head|follow|cross|board|teleport|inspect|read|mine|cut|light|cook|make|place|unlock|drink|cast|pray|dig|craft|smith|choose|select|watch|wait)\b')
 
@@ -1576,6 +1556,38 @@ jobs:
               if len(steps)==1 and len(text)<120: score-=50
               return score
 
+          def detail_score(steps):
+              """Prefer genuinely complete walkthroughs instead of short summaries.
+              Unlike quality(), this deliberately keeps rewarding extra ordered steps and
+              explanatory text so long quests such as Desert Treasure II do not collapse
+              to a terse Quest Helper summary.
+              """
+              if not steps:
+                  return -100000
+              cleaned=[x for x in steps if not GENERIC.search(clean(x.get('text',''))) and not BAD.search(clean(x.get('text','')))]
+              if not cleaned:
+                  return -100000
+              text=' '.join(x.get('text','') for x in cleaned)
+              score=(len(cleaned)*6) + min(len(text)//80,500)
+              score += sum(2 for x in cleaned if len(x.get('text',''))>=90)
+              score += sum(2 for x in cleaned if re.search(r'\b(?:north|south|east|west|floor|room|door|ladder|stairs|NPC|level|item|equip|use|talk|speak|search|climb|enter|exit|teleport|attack|pray|protect)\b', x.get('text',''), re.I))
+              return score
+
+          def strip_generic_steps(steps):
+              out=[]
+              seen=set()
+              for st in steps or []:
+                  sec=clean(st.get('section','Walkthrough'))
+                  txt=clean(st.get('text',''))
+                  if not txt or BAD.search(txt) or GENERIC.search(txt):
+                      continue
+                  key=re.sub(r'\s+',' ',txt.lower()).strip()
+                  if key in seen:
+                      continue
+                  seen.add(key)
+                  out.append({'section':sec or 'Walkthrough','text':txt})
+              return out
+
           def java_unescape(raw):
               try:
                   return bytes(raw, 'utf-8').decode('unicode_escape')
@@ -1775,6 +1787,67 @@ jobs:
               q['sourceNote']='The Corsair Curse uses a verified detailed fallback plus build-time cross-checking because earlier QuestMate builds produced an incomplete, overly terse guide.'
               return q
 
+          def patch_demon_slayer(q):
+              """Remove the vague 'say the magic words' instruction.
+              The incantation uses the same five words, but their order is random for the
+              player's quest instance, so the guide must tell the player to record the
+              order shown by Aris rather than hard-code a false universal sequence.
+              """
+              words='Carlem, Aber, Camerinthum, Purchai, and Gabindo'
+              replacement=(
+                  "Defeat Delrith with Silverlight at the stone circle south of Varrock. "
+                  "After the fight, the banishment dialogue asks for Wally's five-word incantation. "
+                  f"The five possible words are {words}, but the ORDER is random for your quest. "
+                  "Use the exact order Wally said during Aris's vision at the start of Demon Slayer. "
+                  "Select each of the five words in that recorded order to banish Delrith and complete the quest."
+              )
+              saw=False
+              for st in q.get('steps',[]):
+                  txt=clean(st.get('text',''))
+                  low=txt.lower()
+                  if 'delrith' in low and ('magic word' in low or 'incantation' in low or 'banish' in low):
+                      st['section']='Banish Delrith — exact incantation instructions'
+                      st['text']=replacement
+                      saw=True
+              if not saw:
+                  q.setdefault('steps',[]).append({
+                      'section':'Banish Delrith — exact incantation instructions',
+                      'text':replacement
+                  })
+              # Add an early reminder so the player cannot reach the final fight without the sequence.
+              reminder=(
+                  f"During Aris's vision, write down Wally's incantation in the exact order shown. "
+                  f"It is a random ordering of these five words: {words}. You will need that exact order after defeating Delrith."
+              )
+              if not any("random ordering" in clean(x.get('text','')).lower() for x in q.get('steps',[])):
+                  pos=1 if len(q.get('steps',[]))>1 else 0
+                  q['steps'].insert(pos,{'section':'Important — record the incantation','text':reminder})
+              return q
+
+          def patch_desert_treasure_ii(q, full_steps, quick_steps, runelite_steps):
+              """For DT2, never keep synthetic instructions such as 'do step'.
+              Prefer the longest detailed Wiki walkthrough, because the quest contains
+              several large self-contained routes and boss sections that must remain expanded.
+              """
+              candidates=[
+                  ('OSRS Wiki full guide', strip_generic_steps(full_steps)),
+                  ('OSRS Wiki quick guide', strip_generic_steps(quick_steps)),
+                  ('RuneLite Quest Helper', strip_generic_steps(runelite_steps)),
+                  ('current selection', strip_generic_steps(q.get('steps',[]))),
+              ]
+              source,best=max(candidates,key=lambda pair:detail_score(pair[1]))
+              # DT2 should be a long guide. Prefer the full guide whenever it contains
+              # a substantial ordered walkthrough even if another source scores similarly.
+              full_clean=strip_generic_steps(full_steps)
+              if len(full_clean)>=35:
+                  source,best='OSRS Wiki full guide',full_clean
+              q['steps']=best
+              q['sourceNote']=(
+                  f'Desert Treasure II uses {source} with every extracted sub-section expanded in order. '
+                  'Generic placeholder instructions are removed at build time.'
+              )
+              return q
+
           # Quests that can directly or optionally award Defence experience.
           # Live parsed reward text is still checked first; this fallback covers
           # choice rewards whose wording varies between Wiki and Quest Helper.
@@ -1842,31 +1915,22 @@ jobs:
               canonical,quick,full=fetch_wiki(title)
               if canonical: q['name']=canonical
 
-              quick_steps=parse_walkthrough(quick) if quick else []
-              full_steps=parse_walkthrough(full) if full else []
-              runelite=qh_steps(q['name'])
-              seed=good_seed_steps(q)
+              quick_steps=strip_generic_steps(parse_walkthrough(quick) if quick else [])
+              full_steps=strip_generic_steps(parse_walkthrough(full) if full else [])
+              runelite=strip_generic_steps(qh_steps(q['name']))
+              seed=strip_generic_steps(good_seed_steps(q))
 
-              # RuneLite Quest Helper is the primary detailed source because its source files encode
-              # the quest's ordered NPC/object/tile interactions. The Wiki quick guide is used when
-              # it is more complete, and the embedded seed is only a final fallback.
+              # v14 chooses the most detailed complete source, not merely the first source
+              # that passes a minimum quality threshold. This is important for long quests:
+              # a 70-step full walkthrough must beat a 10-step summary.
               choices=[
                   ('RuneLite Quest Helper', runelite),
                   ('OSRS Wiki quick guide', quick_steps),
                   ('OSRS Wiki full guide', full_steps),
                   ('embedded Quest Helper seed', seed),
               ]
-              source,best=max(choices,key=lambda pair:quality(pair[1]))
-
-              # v12 prefers the OSRS Wiki quick guide whenever it is sufficiently detailed.
-              # RuneLite is excellent for state tracking, but its constructor labels can be terse
-              # (for example just "Talk to X"), which caused the vague walkthroughs seen in testing.
-              if quality(quick_steps)>=65 and len(quick_steps)>=4:
-                  source,best='OSRS Wiki quick guide',quick_steps
-              elif quality(runelite)>=85 and len(runelite)>=6:
-                  source,best='RuneLite Quest Helper',runelite
-
-              q['steps']=best
+              source,best=max(choices,key=lambda pair:detail_score(pair[1]))
+              q['steps']=strip_generic_steps(best)
               if source=='OSRS Wiki': counts['wiki']+=1
               elif source=='RuneLite Quest Helper': counts['runelite']+=1
               else: counts['seed']+=1
@@ -1883,12 +1947,17 @@ jobs:
               else:
                   q['start']=''
 
+              norm_name=re.sub(r'[^a-z0-9]','',q.get('name','').lower())
               if q['name'].lower().replace("'",'') == 'cooks assistant': q=patch_cooks(q)
-              if re.sub(r'[^a-z0-9]','',q.get('name','').lower()) == 'thecorsaircurse':
+              if norm_name == 'thecorsaircurse':
                   q=patch_corsair(q)
-              black_key = re.sub(r'[^a-z0-9]', '', q.get('name','').lower())
-              if black_key in ('blackknightfortress','blackknightsfortress'):
+              if norm_name in ('blackknightfortress','blackknightsfortress'):
                   q=patch_black_knights(q)
+              if norm_name == 'demonslayer':
+                  q=patch_demon_slayer(q)
+              if norm_name in ('deserttreasureiithefallenempire','deserttreasure2thefallenempire','deserttreasureii'):
+                  q=patch_desert_treasure_ii(q,full_steps,quick_steps,runelite)
+              q['steps']=strip_generic_steps(q.get('steps',[]))
 
               # Every quest page must expose a rewards section. Live OSRS Wiki data is preferred;
               # if a source is temporarily unavailable, preserve a clear audit marker instead of silently omitting it.
@@ -1929,7 +1998,7 @@ jobs:
               f'Embedded seed fallbacks: {counts["seed"]}\n'
               f'Guides flagged for manual review: {counts["weak"]}\n'
               f'Entries missing parsed rewards: {counts["missing_rewards"]}\n'
-              'v13 keeps only entries with 3+ walkthrough steps, a passing detail score, verified rewards, and an explicit Quest Point reward. This removes miniquests and non-quest scraper entries.\n'
+              'v14 selects the most detailed available ordered walkthrough, strips generic placeholder steps, keeps only real quests, and applies explicit fixes for Demon Slayer and Desert Treasure II.\n'
               'Defence XP quests are marked blue; Prayer XP quests are marked yellow. See guide-audit.csv for filtered entries.\n'
               'No external wiki links are stored in quests.json.\n', encoding='utf-8')
           print(REPORT.read_text())
@@ -2190,45 +2259,39 @@ jobs:
           joined=json.dumps(d).lower()
           assert not any(x in joined for x in bad_words), 'Vague/filler quest text detected'
           weak=[q['name'] for q in d if len(q.get('steps',[]))<3]
+          placeholder_re=re.compile(r'(?i)not yet implemented|unknown|relevant npc|relevant location|placeholder|\bdo step\b|\bcomplete this step\b|\bfollow the step\b')
+          bad_steps=[(q['name'],s.get('text','')) for q in d for s in q.get('steps',[]) if placeholder_re.search(s.get('text',''))]
+          assert not bad_steps, f'Placeholder walkthrough text remains: {bad_steps[:5]}'
+          demon=[q for q in d if re.sub(r'[^a-z0-9]','',q.get('name','').lower())=='demonslayer']
+          assert demon and any('Carlem' in x.get('text','') and 'Gabindo' in x.get('text','') and 'order is random' in x.get('text','').lower() for x in demon[0]['steps']), 'Demon Slayer incantation guidance missing'
+          dt2=[q for q in d if re.sub(r'[^a-z0-9]','',q.get('name','').lower()) in ('deserttreasureiithefallenempire','deserttreasure2thefallenempire','deserttreasureii')]
+          assert dt2 and len(dt2[0].get('steps',[]))>=25, 'Desert Treasure II guide is still too short'
           print(f'Validated {len(d)} quests-only entries. Guides with fewer than 3 extracted steps: {len(weak)}')
           print('Short-guide examples:', weak[:15])
           PY
           cat questmate-complete/guide-build-report.txt
 
-      - name: Restore stable QuestMate signing key
-        shell: bash
-        run: |
-          cat > /tmp/questmate-stable.jks.b64 <<'KEYSTORE'
-          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
-          KEYSTORE
-          base64 -d /tmp/questmate-stable.jks.b64 > questmate-complete/questmate-stable.jks
-          keytool -list -keystore questmate-complete/questmate-stable.jks -storepass questmate2026 -alias questmate >/dev/null
-          echo "Stable QuestMate signing key restored successfully."
-
       - name: Build debug APK
         working-directory: questmate-complete
         run: gradle :app:assembleDebug --no-daemon --stacktrace
 
-      - name: Verify and rename installable APK
+      - name: Verify APK exists
         run: |
           test -f questmate-complete/app/build/outputs/apk/debug/app-debug.apk
-          cp questmate-complete/app/build/outputs/apk/debug/app-debug.apk questmate-complete/QuestMate-v14-Installable.apk
-          test -s questmate-complete/QuestMate-v14-Installable.apk
-          ls -lh questmate-complete/QuestMate-v14-Installable.apk
-          keytool -printcert -jarfile questmate-complete/QuestMate-v14-Installable.apk | head -40 || true
+          ls -lh questmate-complete/app/build/outputs/apk/debug/app-debug.apk
 
-      - name: Upload QuestMate v14 APK
+      - name: Upload QuestMate Complete APK
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v14-INSTALL-THIS
-          path: questmate-complete/QuestMate-v14-Installable.apk
+          name: QuestMate-v13-Quests-Only-Defence-Prayer
+          path: questmate-complete/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
 
       - name: Upload guide build report
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v14-Guide-Audit
+          name: QuestMate-v13-Guide-Audit
           path: |
             questmate-complete/guide-build-report.txt
             questmate-complete/guide-audit.csv
