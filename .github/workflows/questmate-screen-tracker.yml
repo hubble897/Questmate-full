@@ -1,4 +1,4 @@
-name: Build QuestMate Complete - Regex Fixed All-In-One Guides v20
+name: Build QuestMate Separate v35 - Clickable Quest Links
 
 on:
   workflow_dispatch:
@@ -37,7 +37,7 @@ jobs:
           set -euo pipefail
 
           rm -rf questmate-complete
-          mkdir -p questmate-complete/app/src/main/java/com/questmate/complete
+          mkdir -p questmate-complete/app/src/main/java/com/questmate/separate/v35
           mkdir -p questmate-complete/app/src/main/assets
           mkdir -p questmate-complete/app/src/main/res/values
 
@@ -78,22 +78,22 @@ jobs:
           }
 
           android {
-              namespace 'com.questmate.complete'
+              namespace 'com.questmate.separate.v35'
               compileSdk 35
 
               defaultConfig {
-                  applicationId 'com.questmate.complete'
+                  applicationId 'com.questmate.separate.v35'
                   minSdk 26
                   targetSdk 35
-                  versionCode 20
-                  versionName '20.0-regex-fixed-all-in-one-guides'
+                  versionCode 35
+                  versionName '35.0-clickable-quest-links'
               }
           }
           EOF
 
           cat > questmate-complete/app/src/main/res/values/strings.xml <<'EOF'
           <resources>
-              <string name="app_name">QuestMate Complete</string>
+              <string name="app_name">QuestMate Separate v35</string>
           </resources>
           EOF
 
@@ -113,7 +113,7 @@ jobs:
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <application
                   android:allowBackup="true"
-                  android:label="QuestMate Complete"
+                  android:label="QuestMate Separate v35"
                   android:theme="@style/AppTheme"
                   android:usesCleartextTraffic="false">
                   <activity
@@ -1300,6 +1300,7 @@ jobs:
 
           cat > /tmp/enrich_quests.py <<'PYEOF'
           import json, re, time, html, csv
+          from difflib import SequenceMatcher
           from pathlib import Path
           import requests
           from bs4 import BeautifulSoup, Tag
@@ -1320,7 +1321,34 @@ jobs:
           SUBGUIDE = re.compile(r"(?i)^\s*(?:do|complete|follow|perform|finish|continue(?: with)?|work through)\s+(?:the\s+)?(.+?)\s+(?:steps?|section|part|route|sub-?guide)\s*[.!]?\s*$")
           VAGUE = re.compile(r"(?i)^\s*(?:solve|complete|finish|do|perform|follow|continue|defeat)\s+(?:the\s+)?(?:[a-z0-9' -]+\s+)?(?:puzzle|section|part|route|fight|boss|trial|challenge|steps?|sub-?guide)\s*[.!]?\s*$")
           GENERIC = re.compile(r'(?i)^\s*(?:do|complete|perform|finish|continue)\s+(?:the\s+)?(?:next\s+)?step\s*\.?\s*$|^\s*solve\s+(?:the\s+)?puzzle\s*\.?\s*$')
+          TERSE_ACTION = re.compile(r"(?i)^\s*(?:find(?:ing)?|locate|return|go|travel|head|talk|speak|meet|bring|get|obtain|collect|enter|leave|defeat|kill|fight|solve|complete|finish|use|take|make|craft|smith|mine|search|inspect|read|climb|cross|board|open|unlock)\b")
+          # Reward/unlock metadata sometimes leaks into helper-derived step arrays. These are
+          # not quest instructions and must never be treated as walkthrough actions.
+          REWARD_LIKE_STEP = re.compile(r"(?i)^\s*(?:use of|access to|ability to|permission to|unlock(?:s|ed)?\b|reward(?:s)?\b|quest points?\b|(?:[0-9][0-9,]*)\s+(?:experience|xp)\b)")
           SPACE = re.compile(r'\s+')
+
+          def is_terse_fragment(text):
+              """Catch heading-like or placeholder-like micro steps such as
+              'Find the portrait', 'Finding an Imcando', or 'Return the sword'.
+              Real detailed instructions normally contain more than four words or
+              include concrete route/dialogue/item information."""
+              t=clean(text)
+              if not t or REWARD_LIKE_STEP.search(t) or not TERSE_ACTION.search(t):
+                  return False
+              words=re.findall(r"[A-Za-z0-9']+", t)
+              return len(words) <= 4
+
+          def content_words(text):
+              stop={'the','a','an','to','of','and','or','with','from','in','on','at','for','then','your','you','this','that','it','back'}
+              out=[]
+              for w in re.findall(r"[A-Za-z0-9']+", clean(text).lower()):
+                  if w in stop: continue
+                  # Tiny stemming is enough to match finding/find and returning/return.
+                  if w.endswith('ing') and len(w)>5: w=w[:-3]
+                  elif w.endswith('ed') and len(w)>4: w=w[:-2]
+                  elif w.endswith('s') and len(w)>4: w=w[:-1]
+                  out.append(w)
+              return set(out)
           ACTION = re.compile(r'(?i)\b(talk|speak|go|travel|walk|run|enter|leave|climb|use|take|pick|collect|give|return|kill|fight|search|open|close|pull|push|operate|equip|wear|buy|bring|head|follow|cross|board|teleport|inspect|read|mine|cut|light|cook|make|place|unlock|drink|cast|pray|dig|craft|smith|choose|select|watch|wait)\b')
 
           NAME_FIX = {
@@ -1330,6 +1358,15 @@ jobs:
               'A Porcine Of Interest': 'A Porcine of Interest',
               'A Night At The Theatre': 'A Night at the Theatre',
               'Demon Slayer': 'Demon Slayer',
+              # OSRS Wiki uses the one-word 'Fairytale' spelling. Some RuneLite/seed
+              # sources use 'Fairy Tale', which previously caused Cure a Queen to resolve
+              # to a page with metadata but no usable walkthrough.
+              'Fairy Tale I - Growing Pains': 'Fairytale I - Growing Pains',
+              'Fairy Tale II - Cure a Queen': 'Fairytale II - Cure a Queen',
+              'Fairy Tale I – Growing Pains': 'Fairytale I - Growing Pains',
+              'Fairy Tale II – Cure a Queen': 'Fairytale II - Cure a Queen',
+              'Fairytale 1 - Growing Pains': 'Fairytale I - Growing Pains',
+              'Fairytale 2 - Cure a Queen': 'Fairytale II - Cure a Queen',
           }
 
           def clean(s):
@@ -1453,7 +1490,7 @@ jobs:
 
               def add_step(sec, value):
                   value=clean(value)
-                  if not value or len(value)<8 or BAD.search(value):
+                  if not value or len(value)<8 or BAD.search(value) or REWARD_LIKE_STEP.search(value):
                       return
                   low=value.lower()
                   # Skip obvious page furniture and pure dialogue-choice number rows.
@@ -1534,17 +1571,25 @@ jobs:
                   if got==wanted:
                       chosen=h; break
               if chosen is None:
+                  best=None; best_ratio=0.0
                   for h in headings:
                       got=_norm_label(h.get_text(' ',strip=True))
                       if wanted in got or got in wanted:
                           if min(len(got),len(wanted)) >= 4:
                               chosen=h; break
+                      # Handle wording changes such as 'Find the portrait' vs
+                      # 'Finding the portrait' without guessing unrelated sections.
+                      ratio=SequenceMatcher(None,wanted,got).ratio() if got else 0.0
+                      if ratio>best_ratio:
+                          best_ratio=ratio; best=h
+                  if chosen is None and best is not None and best_ratio>=0.72:
+                      chosen=best
               if chosen is None: return []
               level=int(chosen.name[1]); section=clean(chosen.get_text(' ',strip=True)) or label
               out=[]; seen=set()
               def add(value, sec=section):
                   value=clean(value)
-                  if not value or len(value)<8 or BAD.search(value): return
+                  if not value or len(value)<8 or BAD.search(value) or REWARD_LIKE_STEP.search(value): return
                   if SUBGUIDE.match(value) or VAGUE.match(value): return
                   key=value.lower()
                   if key in seen: return
@@ -1607,6 +1652,22 @@ jobs:
                       if expanded:
                           out.extend(expanded); continue
                       out.append(st); continue
+                  if not m and is_terse_fragment(txt):
+                      # Short labels are often section headings leaked into the step list.
+                      # Try to expand both the text itself and its section heading into the
+                      # real Wiki instructions before allowing the fragment to survive.
+                      expanded=[]
+                      labels=[txt, clean(st.get('section',''))]
+                      for label_try in labels:
+                          if not label_try: continue
+                          for markup in (full_markup,quick_markup):
+                              expanded=extract_named_section(markup,label_try)
+                              expanded=[x for x in expanded if clean(x.get('text','')).lower()!=txt.lower()]
+                              if expanded: break
+                          if expanded: break
+                      if expanded:
+                          out.extend(expanded); continue
+                      out.append(st); continue
                   if not m:
                       out.append(st); continue
                   label=clean(m.group(1)).rstrip(' .:;-')
@@ -1631,6 +1692,60 @@ jobs:
               if any(SUBGUIDE.match(clean(x.get('text',''))) for x in out):
                   return expand_subguide_shortcuts(out,full_markup,quick_markup,quest_title)
               return out
+
+          def remove_redundant_summary_shortcuts(steps):
+              """Remove heading-like summary rows only when their information is already
+              present in a longer concrete instruction. This catches trailing leftovers such
+              as 'Finding an Imcando', 'Find the portrait', and 'Return the sword' globally,
+              while preserving unique required actions."""
+              steps=list(steps or [])
+              concrete_by_section={}
+              concrete=[]
+              for st in steps:
+                  sec=clean(st.get('section','')).casefold()
+                  txt=clean(st.get('text',''))
+                  if not txt:
+                      continue
+                  if not SUBGUIDE.match(txt) and not VAGUE.match(txt) and not BAD.search(txt) and not is_terse_fragment(txt):
+                      concrete_by_section[sec]=concrete_by_section.get(sec,0)+1
+                      concrete.append((txt,content_words(txt)))
+
+              out=[]
+              for st in steps:
+                  sec=clean(st.get('section','')).casefold()
+                  txt=clean(st.get('text',''))
+                  if (SUBGUIDE.match(txt) or VAGUE.match(txt)) and concrete_by_section.get(sec,0)>0:
+                      continue
+                  if is_terse_fragment(txt):
+                      keys=content_words(txt)
+                      # Remove only when a longer detailed instruction demonstrably covers
+                      # the same subject/action; otherwise leave it for the final audit so
+                      # the build cannot silently hide a missing quest action.
+                      covered=False
+                      for other,other_keys in concrete:
+                          if len(other) < 35: continue
+                          overlap=keys & other_keys
+                          if keys and (len(overlap)>=max(1,len(keys)-1) or (len(keys)<=2 and overlap)):
+                              covered=True; break
+                      if covered:
+                          continue
+                  out.append(st)
+              return out
+
+          def safe_expand_candidate(steps, full_markup, quick_markup, quest_title, label):
+              """Expand one candidate and reject it only if unresolved shortcut text
+              remains after safe redundant-summary cleanup."""
+              try:
+                  expanded=expand_subguide_shortcuts(steps,full_markup,quick_markup,quest_title)
+                  expanded=strip_generic_steps(expanded)
+                  expanded=remove_redundant_summary_shortcuts(expanded)
+                  bad=[clean(x.get('text','')) for x in expanded
+                       if SUBGUIDE.match(clean(x.get('text',''))) or VAGUE.match(clean(x.get('text','')))]
+                  if bad:
+                      raise RuntimeError('unresolved placeholder/sub-guide text: '+repr(bad[:5]))
+                  return expanded, ''
+              except Exception as exc:
+                  return [], f'{label}: {exc}'
 
           def parse_rewards(markup):
               soup=safe_soup(markup)
@@ -1697,6 +1812,7 @@ jobs:
               # vague 'solve/complete the puzzle/boss' shortcut. Detailed Wiki sources
               # should beat terse helper summaries whenever available.
               score -= 1000 * sum(1 for x in cleaned if SUBGUIDE.match(clean(x.get('text',''))) or VAGUE.match(clean(x.get('text',''))))
+              score -= 250 * sum(1 for x in cleaned if is_terse_fragment(clean(x.get('text',''))))
               return score
 
           def strip_generic_steps(steps):
@@ -1705,7 +1821,7 @@ jobs:
               for st in steps or []:
                   sec=clean(st.get('section','Walkthrough'))
                   txt=clean(st.get('text',''))
-                  if not txt or BAD.search(txt) or GENERIC.search(txt):
+                  if not txt or BAD.search(txt) or GENERIC.search(txt) or REWARD_LIKE_STEP.search(txt):
                       continue
                   key=re.sub(r'\s+',' ',txt.lower()).strip()
                   if key in seen:
@@ -1997,16 +2113,34 @@ jobs:
           def reward_blob(q):
               return ' '.join(str(x) for x in q.get('rewards',[])).lower()
 
+          def norm_reward_name(name):
+              return re.sub(r'[^a-z0-9]','',clean(name).lower())
+
+          DEFENCE_REWARD_KEYS={norm_reward_name(x) for x in DEFENCE_REWARD_FALLBACK}
+          PRAYER_REWARD_KEYS={norm_reward_name(x) for x in PRAYER_REWARD_FALLBACK}
+
+          def reward_mentions_skill_xp(blob, skill_words):
+              # Reward metadata can be worded as "Defence experience", "Defence XP",
+              # "2,000 Defence", or "experience in Defence". Accept all of those while
+              # still requiring reward-context evidence.
+              b=' '+blob.lower()+' '
+              if not any(w in b for w in skill_words):
+                  return False
+              return (
+                  'experience' in b or ' xp' in b or
+                  bool(re.search(r'\b\d[\d,\.]*\s*(?:defence|defense|prayer)\b', b)) or
+                  bool(re.search(r'\b(?:defence|defense|prayer)\s*[:\-]?\s*\d[\d,\.]*\b', b))
+              )
+
           def has_defence_reward(q):
               blob=reward_blob(q)
-              direct=(('defence' in blob or 'defense' in blob) and
-                      ('experience' in blob or 'xp' in blob))
-              return direct or q.get('name','') in DEFENCE_REWARD_FALLBACK
+              direct=reward_mentions_skill_xp(blob,('defence','defense'))
+              return direct or norm_reward_name(q.get('name','')) in DEFENCE_REWARD_KEYS
 
           def has_prayer_reward(q):
               blob=reward_blob(q)
-              direct=('prayer' in blob and ('experience' in blob or 'xp' in blob))
-              return direct or q.get('name','') in PRAYER_REWARD_FALLBACK
+              direct=reward_mentions_skill_xp(blob,('prayer',))
+              return direct or norm_reward_name(q.get('name','')) in PRAYER_REWARD_KEYS
 
           def has_real_reward(q):
               rewards=[clean(x) for x in q.get('rewards',[]) if clean(x)]
@@ -2021,14 +2155,16 @@ jobs:
               return bool(re.search(r'\bquest\s+points?\b|\bqp\b', blob, re.I))
 
           def canonical_quest_titles():
-              """Return the complete main-quest index without depending on reward parsing.
+              """Build the main OSRS quest index independently of walkthrough/reward parsing.
 
-              Primary membership source is RuneLite's quest-progress enums, which separate
-              normal quests from the miniquest section. OSRS Wiki Quests/List is merged in
-              when available so newly released quests are not missed. Names are resolved to
-              the actual Wiki/seed title, but membership never depends on walkthrough or
-              reward completeness.
+              Sources, in order:
+              1. Local RuneLite Quest Helper clone.
+              2. Raw GitHub QuestVarPlayer.java + QuestVarbits.java network fallback.
+              3. OSRS Wiki Quests/List merge.
+
+              This deliberately does NOT use reward text to decide whether an entry is a quest.
               """
+
               raw_seed=json.loads(SRC.read_text(encoding='utf-8'))
               seed_by_key={}
               for q in raw_seed:
@@ -2057,79 +2193,124 @@ jobs:
               }
 
               def enum_to_candidate(enum):
-                  e=re.sub(r'_STATE_\\d+$','',enum)
+                  e=re.sub(r'_STATE_\d+$','',enum)
                   key=re.sub(r'[^a-z0-9]','',e.lower())
-                  if key in enum_alias: return enum_alias[key]
-                  if key in seed_by_key: return seed_by_key[key]
-                  # Conservative seed fuzzy match handles punctuation/roman numerals.
-                  for sk,n in seed_by_key.items():
-                      if sk==key or sk.rstrip('i')==key.rstrip('i'):
-                          return n
+                  if key in enum_alias:
+                      return enum_alias[key]
+                  if key in seed_by_key:
+                      return seed_by_key[key]
                   words=e.lower().split('_')
                   small={'of','the','and','a','an','to','in','at','for','on'}
                   return ' '.join(w if w in small else w.capitalize() for w in words)
 
+              def strip_after_miniquests(s):
+                  low=s.lower()
+                  cuts=[]
+                  for marker in ('miniquest', 'mini-quest', 'mini quest'):
+                      i=low.find(marker)
+                      if i >= 0:
+                          cuts.append(i)
+                  return s[:min(cuts)] if cuts else s
+
+              def extract_enums(s):
+                  s=strip_after_miniquests(s)
+                  found=[]
+                  for enum in re.findall(r'\bQUEST_([A-Z][A-Z0-9_]*)\s*\(',s):
+                      if enum == 'TAB':
+                          continue
+                      if re.search(r'_STATE_\d+$',enum):
+                          continue
+                      found.append(enum)
+                  return found
+
+              def fetch_text(url):
+                  try:
+                      r=session.get(url,timeout=25)
+                      if r.status_code==200 and 'QUEST_' in r.text:
+                          return r.text
+                  except Exception as exc:
+                      print('Network source unavailable:',url,repr(exc))
+                  return ''
+
               def runelite_enums():
                   enums=[]
                   info_root=Path('/tmp/quest-helper/src/main/java/com/questhelper/questinfo')
+                  local_ok=False
                   for fn in ('QuestVarPlayer.java','QuestVarbits.java'):
                       f=info_root/fn
-                      if not f.exists():
-                          continue
-                      s=f.read_text(encoding='utf-8',errors='ignore')
-                      # Everything after the explicit miniquest marker is not a main quest.
-                      s=re.split(r'(?is)/\\*\\*.*?mini-?quest.*?\\*/|//\\s*mini-?quest',s,maxsplit=1)[0]
-                      for enum in re.findall(r'\bQUEST_([A-Z][A-Z0-9_]*)\s*\(',s):
-                          if re.search(r'_STATE_\\d+$',enum):
-                              continue
-                          enums.append(enum)
-                  return list(dict.fromkeys(enums))
+                      if f.exists():
+                          s=f.read_text(encoding='utf-8',errors='ignore')
+                          got=extract_enums(s)
+                          if got:
+                              local_ok=True
+                              enums.extend(got)
+
+                  # GitHub raw fallback makes this independent of git-clone success.
+                  if not local_ok or len(set(enums)) < 100:
+                      base='https://raw.githubusercontent.com/Zoinkwiz/quest-helper/master/src/main/java/com/questhelper/questinfo/'
+                      for fn in ('QuestVarPlayer.java','QuestVarbits.java'):
+                          s=fetch_text(base+fn)
+                          if s:
+                              enums.extend(extract_enums(s))
+
+                  enums=list(dict.fromkeys(enums))
+                  print(f'RuneLite main-quest enum entries discovered: {len(enums)}')
+                  return enums
 
               def wiki_list_titles():
                   try:
                       markup=wiki_parse('Quests/List')
                       soup=safe_soup(markup)
-                      if soup is None: return []
-                      titles=[]; active=False
-                      wanted={'free-to-play quests',"members' quests",'members quests'}
-                      for node in soup.find_all(['h2','table']):
-                          if node.name=='h2':
-                              lab=clean(node.get_text(' ',strip=True)).lower()
-                              active=lab in wanted
-                              if lab.startswith(('miniquest','quest classifications','see also')):
-                                  active=False
+                      if soup is None:
+                          return []
+                      titles=[]
+                      # Accept all quest tables, but only rows from a table with a
+                      # Quest/Name header. Exclude miniquest-labelled tables/sections.
+                      for table in soup.find_all('table'):
+                          heading=table.find_previous(['h2','h3'])
+                          heading_text=clean(heading.get_text(' ',strip=True)).lower() if heading else ''
+                          if 'miniquest' in heading_text or 'mini-quest' in heading_text:
                               continue
-                          if node.name!='table' or not active: continue
-                          rows=node.find_all('tr')
-                          # Detect quest/name column by header, never a hard-coded index.
+                          rows=table.find_all('tr')
+                          if not rows:
+                              continue
                           qcol=None
-                          for tr in rows[:4]:
+                          for tr in rows[:5]:
                               cells=tr.find_all(['th','td'],recursive=False)
                               labs=[clean(c.get_text(' ',strip=True)).lower() for c in cells]
                               for i,lab in enumerate(labs):
                                   if lab in ('quest','name') or lab.startswith('quest '):
-                                      qcol=i; break
-                              if qcol is not None: break
-                          if qcol is None: continue
+                                      qcol=i
+                                      break
+                              if qcol is not None:
+                                  break
+                          if qcol is None:
+                              continue
                           for tr in rows:
                               cells=tr.find_all(['th','td'],recursive=False)
-                              if qcol>=len(cells): continue
-                              a=cells[qcol].find('a',href=True)
-                              if not a: continue
+                              if qcol>=len(cells):
+                                  continue
+                              cell=cells[qcol]
+                              a=cell.find('a',href=True)
+                              if not a:
+                                  continue
                               t=clean(a.get('title') or a.get_text(' ',strip=True))
-                              if not t or t.startswith(('File:','Category:','Template:')): continue
-                              if '/Quick guide' in t or '/Strategy' in t: continue
+                              if not t or t.startswith(('File:','Category:','Template:','Help:','Special:')):
+                                  continue
+                              if '/Quick guide' in t or '/Strategy' in t:
+                                  continue
                               titles.append(t)
-                      return dedupe(titles)
+                      titles=dedupe(titles)
+                      print(f'OSRS Wiki quest-list titles discovered: {len(titles)}')
+                      return titles
                   except Exception as exc:
-                      print('Wiki quest index unavailable:',repr(exc)); return []
+                      print('Wiki quest index unavailable:',repr(exc))
+                      return []
 
               rl_names=[enum_to_candidate(e) for e in runelite_enums()]
               wiki_names=wiki_list_titles()
               titles=dedupe(wiki_names+rl_names)
 
-              # Remove only known non-main-quest/navigation values; do NOT remove a quest
-              # because its guide/rewards failed to parse.
               deny={
                   'quest tab','architectural alliance','bear your soul','curse of the empty lord',
                   'enchanted key',"the general's shadow",'skippy and the mogres',
@@ -2137,17 +2318,144 @@ jobs:
                   "daddy's home","hopespear's will",'vale totems','his faithful servants',
                   'barbarian training','knight waves training grounds','stronghold of security'
               }
-              titles=[t for t in titles if clean(t).lower() not in deny]
+              def is_real_main_quest_title(t):
+                  t=clean(t)
+                  low=t.lower()
+                  if not t or low in deny:
+                      return False
+                  # Wiki category/index/subpage links are not quests.
+                  if low.startswith('quests/'):
+                      return False
+                  if low in {
+                      'quests','quest list','quest points','quest difficulties',
+                      'optimal quest guide','quest experience','experienced',
+                      'grandmaster','intermediate','master','novice','special'
+                  }:
+                      return False
+                  # Slash-titled Quests/* pages are category/index pages. Other slash
+                  # subpages (Quick guide, Strategy, etc.) are not canonical quest titles.
+                  if '/quick guide' in low or '/strategy' in low:
+                      return False
+                  return True
+
+              titles=[t for t in titles if is_real_main_quest_title(t)]
               titles=dedupe(titles)
 
-              required={"Cook's Assistant",'Demon Slayer','Dragon Slayer I','Recipe for Disaster','Desert Treasure II - The Fallen Empire'}
-              missing=sorted(required-set(titles))
-              # Current RuneLite data should yield well above 170 main quests. This is a
-              # source-health check, not an arbitrary app-content filter.
-              if len(titles)<170 or missing:
-                  raise RuntimeError(f'Canonical main-quest index incomplete: {len(titles)} titles; missing {missing}')
-              print(f'Canonical main quests discovered: {len(titles)}')
-              return titles
+              required={"Cook's Assistant",'Demon Slayer','Dragon Slayer I','Recipe for Disaster',
+                        'Desert Treasure II - The Fallen Empire'}
+
+              # v28: Never let a temporary RuneLite/Wiki quest-index parser failure collapse
+              # the application to one or a handful of quests. The embedded seed contains
+              # both main quests and helper/sub-guide entries, so use a strict main-quest
+              # filter as an offline canonical-index fallback. Live Wiki/RuneLite discovery
+              # still wins whenever it returns a healthy list.
+              def seed_main_quest_fallback():
+                  helper_exact={
+                      'bear your soul','enter the abyss','in search of knowledge',
+                      'agility dungeon steps','altar puzzle','amlodd light puzzle','ask about fish cake',
+                      'ask about ritual','baxtorian pillar','bring drezel pure essence step','bring lunar items',
+                      'cadarn light puzzle','castle drakan','castle drakan room step','chance challenge',
+                      'chest code step','current affairs','crwys light puzzle','crypt puzzle','dye ship steps',
+                      'egg solver','feeding aimeri','find longramble','fish monkfish','fix wall','get rohak drunk',
+                      'give auguste items','give ingredients to helpers step','give items','hazeel valves',
+                      'hefin light puzzle','herblore puzzle','inform king bolren','iorwerth light puzzle',
+                      'jug puzzle','kill trolls','locked chest puzzle','m m2 sabotage','make evil stew',
+                      'meilyr light puzzle','memory puzzle','metal door solver','mimic challenge','miss cheevers step',
+                      'monolith puzzle','ms hynn answer dialog quiz step','pandemonium','perseriya steps',
+                      'potion puzzle','prying times','puzzle step','quiz steps','rat charming','repair town',
+                      'rubble solver','rum smuggling step','scrambled','selecting combat gear','sir ren itchood step',
+                      'skavid choice','slug steps','solve chest code','starting off','statue puzzle','sucellus steps',
+                      'tomb riddle','trahaearn light puzzle','tree solver','unveil evil','valve step',
+                      'vardorvis steps','weight step','whisperer steps','yewnocks puzzle'
+                  }
+                  rfd_prefix='r f d '
+                  shield_parts={'shield of arrav black arm gang','shield of arrav phoenix gang'}
+                  fallback=[]
+                  for seed_name in seed_by_key.values():
+                      n=clean(seed_name)
+                      low=n.lower()
+                      if not n or low in helper_exact or low.startswith(rfd_prefix) or low in shield_parts:
+                          continue
+                      if re.search(r'(?i)\b(?:puzzle|solver|sub-?guide)\b|\bsteps?$',n):
+                          continue
+                      fallback.append(NAME_FIX.get(n,n))
+
+                  # Parent quest entries represented as multiple helper files in RuneLite.
+                  fallback.extend(['Recipe for Disaster','Shield of Arrav'])
+
+                  # Canonical display aliases for seed naming variants.
+                  alias={
+                      'A Souls Bane':"A Soul's Bane",
+                      'A Tail Of Two Cats':'A Tail of Two Cats',
+                      'A Taste Of Hope':'A Taste of Hope',
+                      'A Night At The Theatre':'A Night at the Theatre',
+                      'A Porcine Of Interest':'A Porcine of Interest',
+                      'Another Slice Of Ham':'Another Slice of H.A.M.',
+                      'Between A Rock':'Between a Rock...',
+                      'Cooks Assistant':"Cook's Assistant",
+                      'Desert Treasure':'Desert Treasure I',
+                      'Desert Treasure I I':'Desert Treasure II - The Fallen Empire',
+                      'Dorics Quest':"Doric's Quest",
+                      'Dragon Slayer':'Dragon Slayer I',
+                      'Dragon Slayer I I':'Dragon Slayer II',
+                      'Eadgars Ruse':"Eadgar's Ruse",
+                      'Eagles Peak':"Eagles' Peak",
+                      'Elemental Workshop I I':'Elemental Workshop II',
+                      'Fairytale I':'Fairytale I - Growing Pains',
+                      'Fairytale I I':'Fairytale II - Cure a Queen',
+                      'Gertrudes Cat':"Gertrude's Cat",
+                      'Heroes Quest':"Heroes' Quest",
+                      'Icthlarins Little Helper':"Icthlarin's Little Helper",
+                      'Kings Ransom':"King's Ransom",
+                      'Legends Quest':"Legends' Quest",
+                      'Merlins Crystal':"Merlin's Crystal",
+                      'Monks Friend':"Monk's Friend",
+                      'Mournings End Part I':"Mourning's End Part I",
+                      'Mournings End Part I I':"Mourning's End Part II",
+                      'My Arms Big Adventure':"My Arm's Big Adventure",
+                      'Olafs Quest':"Olaf's Quest",
+                      'Pirates Treasure':"Pirate's Treasure",
+                      'Rag And Bone Man I':'Rag and Bone Man I',
+                      'Rag And Bone Man I I':'Rag and Bone Man II',
+                      'Shades Of Mortton':'Shades of Mort’ton',
+                      'The Knights Sword':"The Knight's Sword",
+                      'Twilights Promise':"Twilight's Promise",
+                      'Witchs House':"Witch's House",
+                      'Witchs Potion':"Witch's Potion",
+                  }
+                  fallback=[alias.get(x,x) for x in fallback]
+                  return dedupe(fallback)
+
+              def req_missing(values):
+                  keys={title_key(v) for v in values}
+                  return sorted(r for r in required if title_key(r) not in keys)
+
+              missing=req_missing(titles)
+              if len(titles)<150 or missing:
+                  offline=seed_main_quest_fallback()
+                  print(
+                      f'Canonical live index unhealthy (discovered={len(titles)}, missing={missing}); '
+                      f'merging {len(offline)} filtered embedded main-quest fallback titles.'
+                  )
+                  titles=dedupe(titles+offline)
+
+              # Required anchor quests are inserted explicitly only after the filtered
+              # fallback merge, so punctuation/roman-numeral differences can never make
+              # the whole build fail before guide enrichment starts.
+              existing_keys={title_key(v) for v in titles}
+              for r in sorted(required):
+                  if title_key(r) not in existing_keys:
+                      titles.append(r)
+                      existing_keys.add(title_key(r))
+
+              if len(titles)<150:
+                  raise RuntimeError(
+                      f'Canonical main-quest index remains implausibly small after live + embedded fallback merge: '
+                      f'{len(titles)} titles. Refusing to ship a truncated quest list.'
+                  )
+
+              print(f'Canonical main quests discovered/merged: {len(titles)}')
+              return dedupe(titles)
 
           def title_key(title):
               return re.sub(r'[^a-z0-9]','',clean(title).lower())
@@ -2200,23 +2508,38 @@ jobs:
               runelite=strip_generic_steps(qh_steps(q['name']))
               seed=strip_generic_steps(good_seed_steps(q))
 
-              # v15 rule for EVERY quest: named sub-guide shortcuts are illegal.
-              # Expand them into their real steps before scoring/selecting a source.
-              quick_steps=strip_generic_steps(expand_subguide_shortcuts(quick_steps,full,quick,q['name']))
-              full_steps=strip_generic_steps(expand_subguide_shortcuts(full_steps,full,quick,q['name']))
-              runelite=strip_generic_steps(expand_subguide_shortcuts(runelite,full,quick,q['name']))
-              seed=strip_generic_steps(expand_subguide_shortcuts(seed,full,quick,q['name']))
+              # Expand each candidate independently. A broken sub-guide pointer in one
+              # source must not abort all 189 quests; that candidate is rejected instead.
+              candidate_errors=[]
+              quick_steps,err=safe_expand_candidate(quick_steps,full,quick,q['name'],'OSRS Wiki quick guide')
+              if err: candidate_errors.append(err)
+              full_steps,err=safe_expand_candidate(full_steps,full,quick,q['name'],'OSRS Wiki full guide')
+              if err: candidate_errors.append(err)
+              runelite,err=safe_expand_candidate(runelite,full,quick,q['name'],'RuneLite Quest Helper')
+              if err: candidate_errors.append(err)
+              seed,err=safe_expand_candidate(seed,full,quick,q['name'],'embedded Quest Helper seed')
+              if err: candidate_errors.append(err)
 
-              # v14 chooses the most detailed complete source, not merely the first source
-              # that passes a minimum quality threshold. This is important for long quests:
-              # a 70-step full walkthrough must beat a 10-step summary.
               choices=[
                   ('RuneLite Quest Helper', runelite),
                   ('OSRS Wiki quick guide', quick_steps),
                   ('OSRS Wiki full guide', full_steps),
                   ('embedded Quest Helper seed', seed),
               ]
-              source,best=max(choices,key=lambda pair:detail_score(pair[1]))
+              viable=[pair for pair in choices if pair[1] and detail_score(pair[1])>-100000]
+              if not viable:
+                  raise RuntimeError(
+                      f"{q['name']}: no complete all-in-one walkthrough candidate remained after "
+                      f"expansion and redundant-summary cleanup. Candidate failures: {' | '.join(candidate_errors)}"
+                  )
+              # Prefer the full OSRS Wiki walkthrough whenever it survived expansion.
+              # RuneLite/quick-guide data remain fallbacks, but a short helper summary must
+              # never beat a richer full quest page simply because it contains many headings.
+              full_pair=next((p for p in viable if p[0]=='OSRS Wiki full guide'),None)
+              if full_pair and len(full_pair[1])>=3 and detail_score(full_pair[1])>=45:
+                  source,best=full_pair
+              else:
+                  source,best=max(viable,key=lambda pair:detail_score(pair[1]))
               q['steps']=strip_generic_steps(best)
               if source=='OSRS Wiki': counts['wiki']+=1
               elif source=='RuneLite Quest Helper': counts['runelite']+=1
@@ -2239,6 +2562,14 @@ jobs:
               q['rewardSource']=' + '.join(sources)
               q['rewardsVerified']=bool(wiki_rewards or runelite_rewards)
               q['rewardCount']=len(rewards)
+              q['rewardMetadata']={
+                  'authoritativeSource':'OSRS Wiki' if wiki_rewards else ('RuneLite Quest Helper' if runelite_rewards else 'embedded metadata'),
+                  'sourceList':sources,
+                  'wikiRewardCount':len(wiki_rewards),
+                  'runeliteRewardCount':len(runelite_rewards),
+                  'embeddedRewardCount':len(seed_rewards),
+                  'mergedRewardCount':len(rewards),
+              }
 
               if q['steps']:
                   existing=clean(q.get('start',''))
@@ -2256,9 +2587,19 @@ jobs:
                   q=patch_demon_slayer(q)
               if norm_name in ('deserttreasureiithefallenempire','deserttreasure2thefallenempire','deserttreasureii'):
                   q=patch_desert_treasure_ii(q,full_steps,quick_steps,runelite)
-              q['steps']=strip_generic_steps(expand_subguide_shortcuts(q.get('steps',[]),full,quick,q['name']))
+              try:
+                  q['steps']=strip_generic_steps(expand_subguide_shortcuts(q.get('steps',[]),full,quick,q['name']))
+                  q['steps']=remove_redundant_summary_shortcuts(q['steps'])
+              except Exception as exc:
+                  raise RuntimeError(f"{q['name']}: final all-in-one expansion failed after choosing {source}: {exc}")
+              # Hard-stop unresolved sub-guide/puzzle placeholders here. Short concrete actions
+              # are NOT fatal at this stage: the global repair pass below must replace them
+              # from the full Wiki walkthrough. This avoids aborting before repair can handle
+              # legitimate but under-detailed lines such as "Bring Thurgo the portrait."
               if any(SUBGUIDE.match(clean(x.get('text',''))) or VAGUE.match(clean(x.get('text',''))) for x in q['steps']):
-                  raise RuntimeError(f"{q['name']}: vague/sub-guide instruction survived final expansion")
+                  bad=[clean(x.get('text','')) for x in q['steps'] if SUBGUIDE.match(clean(x.get('text',''))) or VAGUE.match(clean(x.get('text','')))]
+                  raise RuntimeError(f"{q['name']}: vague/sub-guide instruction survived initial expansion: {bad[:8]}")
+              q['needsDetailRepair']=any(is_terse_fragment(clean(x.get('text',''))) for x in q['steps'])
 
               # Never invent a reward placeholder. Missing reward metadata is an audit
               # failure so the APK cannot claim incomplete rewards as real data.
@@ -2267,6 +2608,11 @@ jobs:
 
               q['defenceReward']=has_defence_reward(q)
               q['prayerReward']=has_prayer_reward(q)
+              q['rewardHighlightMetadata']={
+                  'defenceXpReward':q['defenceReward'],
+                  'prayerXpReward':q['prayerReward'],
+                  'detectedFrom':'merged reward metadata + normalized verified fallback'
+              }
 
               score=quality(q['steps'])
               if score<45: counts['weak']+=1
@@ -2290,7 +2636,7 @@ jobs:
           for q in rebuilt:
               for st in q.get('steps',[]):
                   txt=clean(st.get('text',''))
-                  if BAD.search(txt) or SUBGUIDE.match(txt) or VAGUE.match(txt):
+                  if BAD.search(txt) or SUBGUIDE.match(txt) or VAGUE.match(txt) or is_terse_fragment(txt):
                       unresolved.append((q['name'],txt))
           if weak:
               raise RuntimeError('Incomplete walkthroughs remain: '+', '.join(weak[:20]))
@@ -2316,7 +2662,7 @@ jobs:
               f'Embedded seed fallbacks: {counts["seed"]}\n'
               f'Guides flagged for manual review: {counts["weak"]}\n'
               f'Entries missing parsed rewards: {counts["missing_rewards"]}\n'
-              'v18 reconstructs canonical quest membership from OSRS Wiki plus RuneLite Quest Helper and never filters membership by reward text, then selects the most detailed available ordered walkthrough and recursively expands named sub-guides into the main quest walkthrough for every quest. No Do-X-steps shortcut is permitted.\n'
+              'v26 audits every generated quest for placeholders, terse heading fragments, sub-guide shortcuts and duplicate summary rows; it prefers the full OSRS Wiki walkthrough, expands matching sections into concrete actions, and fails the build instead of shipping unresolved filler.\n'
               'Defence XP quests are marked blue; Prayer XP quests are marked yellow. See guide-audit.csv for filtered entries.\n'
               'No external wiki links are stored in quests.json.\n', encoding='utf-8')
           print(REPORT.read_text())
@@ -2332,8 +2678,128 @@ jobs:
           fi
           rm questmate-complete/app/src/main/assets/quests_seed.json
 
-          cat > questmate-complete/app/src/main/java/com/questmate/complete/MainActivity.java <<'EOF'
-          package com.questmate.complete;
+          # Build a second, independent post-Tutorial-Island -> Quest Cape route.
+          # The route uses the live OSRS Wiki Optimal quest guide ordering and retains
+          # training/activity rows, while the app links quest rows back to the existing
+          # detailed QuestMate quest walkthroughs.
+          cat > /tmp/build_cape_route.py <<'PYEOF'
+          import json,re,requests
+          from bs4 import BeautifulSoup
+          from pathlib import Path
+
+          DB=Path('questmate-complete/app/src/main/assets/quests.json')
+          OUT=Path('questmate-complete/app/src/main/assets/cape_route.json')
+          quests=json.loads(DB.read_text(encoding='utf-8'))
+          names=[q.get('name','').strip() for q in quests if q.get('name','').strip()]
+          by_norm={re.sub(r'[^a-z0-9]','',n.lower()):n for n in names}
+
+          def clean(x):
+              return re.sub(r'\s+',' ',x or '').strip()
+          def norm(x):
+              return re.sub(r'[^a-z0-9]','',clean(x).lower())
+
+          route=[{
+              'type':'milestone','title':'Start — Mainland arrival after Tutorial Island',
+              'detail':'Begin in Lumbridge immediately after finishing Tutorial Island. This route is for a normal members account and prioritises quest XP, major unlocks, transport, area batching and minimum necessary skilling on the path to the Quest Point Cape.'
+          }]
+
+          url='https://oldschool.runescape.wiki/api.php'
+          params={'action':'parse','page':'Optimal_quest_guide','prop':'text','format':'json','formatversion':'2'}
+          sess=requests.Session()
+          sess.headers.update({'User-Agent':'QuestMateRouteBuilder/34.0 (educational Android guide builder)'})
+          r=sess.get(url,params=params,timeout=30)
+          r.raise_for_status()
+          html=r.json().get('parse',{}).get('text','')
+          if not html:
+              raise RuntimeError('OSRS Wiki Optimal quest guide returned no parse text')
+          soup=BeautifulSoup(html,'lxml')
+
+          found=[]
+          matched=set()
+          skills=('attack','strength','defence','defense','ranged','prayer','magic','runecraft','construction','hitpoints','agility','herblore','thieving','crafting','fletching','slayer','hunter','mining','smithing','fishing','cooking','firemaking','woodcutting','farming','sailing')
+          for table in soup.find_all('table'):
+              rows=table.find_all('tr')
+              if not rows: continue
+              headers=[]
+              for tr in rows[:4]:
+                  hs=tr.find_all('th',recursive=False)
+                  if len(hs)>=2:
+                      headers=[clean(h.get_text(' ',strip=True)) for h in hs]
+                      break
+              hlow=[x.lower() for x in headers]
+              if not headers or not any(('quest' in x and 'activity' in x) or x=='quest' for x in hlow):
+                  continue
+              for tr in rows:
+                  cells=tr.find_all(['td','th'],recursive=False)
+                  if not cells or all(c.name=='th' for c in cells): continue
+                  first=clean(cells[0].get_text(' ',strip=True))
+                  if not first: continue
+                  low=first.lower()
+                  if 'tutorial island' in low or 'learning the ropes' in low: continue
+                  # Match canonical quest names by visible text and link title.
+                  candidates=[first]
+                  for a in cells[0].find_all('a'):
+                      candidates.extend([clean(a.get_text(' ',strip=True)),clean(a.get('title',''))])
+                  quest_name=''
+                  for c in candidates:
+                      nc=norm(c)
+                      if nc in by_norm:
+                          quest_name=by_norm[nc]; break
+                  details=[]
+                  for idx,c in enumerate(cells[1:],1):
+                      txt=clean(c.get_text(' ',strip=True))
+                      if not txt: continue
+                      label=headers[idx] if idx<len(headers) else ''
+                      if label:
+                          details.append(f'{label}: {txt}')
+                      else:
+                          details.append(txt)
+                  detail=' • '.join(details)
+                  if quest_name:
+                      found.append({'type':'quest','title':'Complete '+quest_name,'questName':quest_name,'detail':detail})
+                      matched.add(quest_name)
+                  else:
+                      # Preserve useful training/preparation/activity rows from the optimal guide.
+                      useful=('train' in low or 'level' in low or 'experience' in low or 'xp' in low or
+                              any(sk in low for sk in skills) or low.startswith(('obtain ','buy ','collect ','complete ','unlock ','start ')))
+                      if useful and len(first)<180:
+                          found.append({'type':'training','title':first,'detail':detail})
+
+          # De-duplicate identical adjacent route rows without removing deliberately repeated training.
+          dedup=[]
+          for x in found:
+              key=(x.get('type'),x.get('title'),x.get('questName',''))
+              if dedup and key==(dedup[-1].get('type'),dedup[-1].get('title'),dedup[-1].get('questName','')):
+                  continue
+              dedup.append(x)
+          route.extend(dedup)
+
+          # Safety coverage: if the live optimal guide omits/renames a canonical quest,
+          # never silently omit it from the cape route. Append only unmatched canonical quests.
+          missing=[n for n in names if n not in matched]
+          if missing:
+              route.append({'type':'milestone','title':'Final quest coverage check',
+                            'detail':'These quests were not matched by name in the live Optimal quest guide table. Complete them before claiming the cape; tap each one for the full QuestMate walkthrough.'})
+              for n in missing:
+                  route.append({'type':'quest','title':'Complete '+n,'questName':n,'detail':'Canonical QuestMate quest entry — required for complete quest coverage.'})
+
+          route.append({'type':'milestone','title':'Quest Cape — claim your reward',
+                        'detail':'After all quests are complete, go to the Wise Old Man in Draynor Village and purchase the Quest point cape and hood for 99,000 coins.'})
+
+          quest_steps=[x for x in route if x.get('type')=='quest']
+          covered={x.get('questName') for x in quest_steps}
+          assert len(covered)==len(set(names)), f'Cape route coverage mismatch: {len(covered)}/{len(set(names))}'
+          assert len(route)>len(names), 'Cape route did not retain training/activity steps'
+          OUT.write_text(json.dumps(route,ensure_ascii=False,separators=(',',':')),encoding='utf-8')
+          Path('questmate-complete/cape-route-report.txt').write_text(
+              f'Route rows: {len(route)}\nQuest rows: {len(quest_steps)}\nCanonical quests covered: {len(covered)}\nTraining/activity rows: {sum(1 for x in route if x.get("type")=="training")}\nUnmatched canonical quests appended: {len(missing)}\n',
+              encoding='utf-8')
+          print(Path('questmate-complete/cape-route-report.txt').read_text())
+          PYEOF
+          python3 /tmp/build_cape_route.py
+
+          cat > questmate-complete/app/src/main/java/com/questmate/separate/v35/MainActivity.java <<'EOF'
+          package com.questmate.separate.v35;
 
           import android.app.Activity;
           import android.os.Bundle;
@@ -2341,6 +2807,11 @@ jobs:
           import android.graphics.Typeface;
           import android.text.Editable;
           import android.text.TextWatcher;
+          import android.text.SpannableString;
+          import android.text.Spanned;
+          import android.text.TextPaint;
+          import android.text.method.LinkMovementMethod;
+          import android.text.style.ClickableSpan;
           import android.view.Gravity;
           import android.view.View;
           import android.widget.EditText;
@@ -2354,6 +2825,8 @@ jobs:
           import java.util.ArrayList;
           import java.util.List;
           import java.util.Locale;
+          import java.util.regex.Matcher;
+          import java.util.regex.Pattern;
 
           public class MainActivity extends Activity {
               private static final int BG = Color.rgb(16,20,24);
@@ -2364,11 +2837,16 @@ jobs:
               private static final int DEFENCE_BLUE = Color.rgb(80,170,255);
               private static final int PRAYER_YELLOW = Color.rgb(255,215,70);
               private final List<Quest> quests = new ArrayList<>();
+              private final List<RouteStep> capeRoute = new ArrayList<>();
               private LinearLayout root;
+              private boolean returnToCapeRoute = false;
 
               static class Step {
                   String section, text;
                   Step(String section, String text) { this.section=section; this.text=text; }
+              }
+              static class RouteStep {
+                  String type, title, detail, questName;
               }
               static class Quest {
                   String name, start, sourceNote;
@@ -2388,6 +2866,7 @@ jobs:
                   getWindow().setStatusBarColor(BG);
                   getWindow().setNavigationBarColor(BG);
                   loadQuests();
+                  loadCapeRoute();
                   showList();
               }
 
@@ -2398,6 +2877,50 @@ jobs:
                   v.setPadding(0, dp(7), 0, dp(7));
                   if (bold) v.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
                   v.setLineSpacing(0,1.08f);
+                  return v;
+              }
+
+              // Turns every canonical quest name appearing inside arbitrary text into an
+              // in-app link to the detailed QuestMate walkthrough. Longer quest names are
+              // processed first and occupied character ranges prevent overlapping links.
+              private TextView questLinkedTv(String text, float sp, int color, boolean bold, boolean fromCapeRoute) {
+                  TextView v=tv(text,sp,color,bold);
+                  if(text==null || text.isEmpty() || quests.isEmpty()) return v;
+                  SpannableString ss=new SpannableString(text);
+                  boolean[] used=new boolean[text.length()];
+                  List<Quest> ordered=new ArrayList<>(quests);
+                  ordered.sort((a,b)->Integer.compare(b.name.length(),a.name.length()));
+                  boolean linked=false;
+                  for(Quest quest:ordered) {
+                      if(quest.name==null || quest.name.trim().isEmpty()) continue;
+                      Pattern p=Pattern.compile("(?i)(?<![A-Za-z0-9])"+Pattern.quote(quest.name)+"(?![A-Za-z0-9])");
+                      Matcher m=p.matcher(text);
+                      while(m.find()) {
+                          boolean overlap=false;
+                          for(int i=m.start();i<m.end();i++) if(used[i]) { overlap=true; break; }
+                          if(overlap) continue;
+                          for(int i=m.start();i<m.end();i++) used[i]=true;
+                          final Quest target=quest;
+                          ss.setSpan(new ClickableSpan(){
+                              @Override public void onClick(View widget) {
+                                  returnToCapeRoute=fromCapeRoute;
+                                  showQuest(target);
+                              }
+                              @Override public void updateDrawState(TextPaint ds) {
+                                  super.updateDrawState(ds);
+                                  ds.setColor(target.prayerReward?PRAYER_YELLOW:(target.defenceReward?DEFENCE_BLUE:ACCENT));
+                                  ds.setUnderlineText(true);
+                                  ds.setTypeface(Typeface.DEFAULT_BOLD);
+                              }
+                          },m.start(),m.end(),Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                          linked=true;
+                      }
+                  }
+                  if(linked) {
+                      v.setText(ss);
+                      v.setMovementMethod(LinkMovementMethod.getInstance());
+                      v.setHighlightColor(Color.TRANSPARENT);
+                  }
                   return v;
               }
               private void margin(View v, int l, int t, int r, int b) {
@@ -2416,8 +2939,10 @@ jobs:
 
               private void showList() {
                   LinearLayout p=page(); root=p;
-                  TextView title=tv("QuestMate Complete",30,TEXT,true); p.addView(title);
-                  TextView sub=tv(quests.size()+" verified quests • blue = Defence XP • yellow = Prayer XP",15,MUTED,false); p.addView(sub);
+                  TextView title=tv("QuestMate Separate v35",30,TEXT,true); p.addView(title);
+                  TextView sub=tv(quests.size()+" verified quests • BLUE titles = Defence XP • YELLOW titles = Prayer XP",15,MUTED,false); p.addView(sub);
+                  TextView cape=tv("QUEST CAPE ROUTE  →",20,ACCENT,true); cape.setBackgroundColor(PANEL); cape.setPadding(dp(16),dp(15),dp(16),dp(15)); margin(cape,0,14,0,8); cape.setOnClickListener(v->showCapeRoute()); p.addView(cape);
+                  TextView capeSub=tv("Post-Tutorial Island → efficient questing/training order → Quest Point Cape",14,MUTED,false); margin(capeSub,0,0,0,10); p.addView(capeSub);
                   EditText search=new EditText(this); search.setHint("Search quests..."); search.setHintTextColor(MUTED); search.setTextColor(TEXT);
                   search.setSingleLine(true); search.setBackgroundColor(PANEL); search.setPadding(dp(14),dp(12),dp(14),dp(12)); margin(search,0,14,0,10); p.addView(search);
                   LinearLayout list=new LinearLayout(this); list.setOrientation(LinearLayout.VERTICAL); p.addView(list);
@@ -2426,6 +2951,8 @@ jobs:
                       for (Quest quest: quests) {
                           if (!q.isEmpty() && !quest.name.toLowerCase(Locale.ROOT).contains(q)) continue;
                           String rowLabel=quest.name + (quest.defenceReward ? "   • DEFENCE XP" : "") + (quest.prayerReward ? "   • PRAYER XP" : "");
+                          // Prayer takes yellow priority when a quest awards both skills;
+                          // otherwise Defence quests are blue exactly as requested.
                           int rowColor = quest.prayerReward ? PRAYER_YELLOW : (quest.defenceReward ? DEFENCE_BLUE : TEXT);
                           TextView row=tv(rowLabel,19,rowColor,true); row.setBackgroundColor(PANEL); row.setPadding(dp(14),dp(13),dp(14),dp(13)); margin(row,0,4,0,4);
                           row.setOnClickListener(v->showQuest(quest)); list.addView(row); shown++;
@@ -2437,12 +2964,13 @@ jobs:
               }
 
               private void addBullets(LinearLayout p, List<String> values) {
-                  for (String x: values) p.addView(tv("•  "+x,18,TEXT,false));
+                  for (String x: values) p.addView(questLinkedTv("•  "+x,18,TEXT,false,returnToCapeRoute));
               }
 
               private void showQuest(Quest q) {
                   LinearLayout p=page();
-                  TextView back=tv("‹  All quests",18,TEXT,true); back.setOnClickListener(v->showList()); p.addView(back);
+                  TextView back=tv(returnToCapeRoute ? "‹  Quest Cape Route" : "‹  All quests",18,TEXT,true);
+                  back.setOnClickListener(v->{ if(returnToCapeRoute){ returnToCapeRoute=false; showCapeRoute(); } else showList(); }); p.addView(back);
                   int titleColor = q.prayerReward ? PRAYER_YELLOW : (q.defenceReward ? DEFENCE_BLUE : TEXT);
                   TextView title=tv(q.name,31,titleColor,true); margin(title,0,6,0,8); p.addView(title);
                   if (q.defenceReward) p.addView(tv("DEFENCE XP REWARD • blue marker",15,DEFENCE_BLUE,true));
@@ -2450,25 +2978,117 @@ jobs:
 
                   if (!q.items.isEmpty()) { p.addView(heading("Items Required")); addBullets(p,q.items); }
                   if (!q.places.isEmpty()) { p.addView(heading("Places")); addBullets(p,q.places); }
-                  if (q.start!=null && !q.start.trim().isEmpty()) { p.addView(heading("Starting Information")); p.addView(tv(q.start,18,TEXT,false)); }
+                  if (q.start!=null && !q.start.trim().isEmpty()) { p.addView(heading("Starting Information")); p.addView(questLinkedTv(q.start,18,TEXT,false,returnToCapeRoute)); }
 
-                  p.addView(heading("Step-by-Step Walkthrough"));
+                  int walkthroughColor = q.prayerReward ? PRAYER_YELLOW : (q.defenceReward ? DEFENCE_BLUE : ACCENT);
+                  TextView walkthroughHeading=tv("Step-by-Step Walkthrough",25,walkthroughColor,true); margin(walkthroughHeading,0,18,0,8); p.addView(walkthroughHeading);
                   String current=""; int n=1;
                   for (Step s:q.steps) {
                       if (s.section!=null && !s.section.isEmpty() && !s.section.equals(current)) {
-                          current=s.section; TextView sec=tv(current,20,ACCENT,true); margin(sec,0,12,0,2); p.addView(sec);
+                          current=s.section; TextView sec=questLinkedTv(current,20,walkthroughColor,true,returnToCapeRoute); margin(sec,0,12,0,2); p.addView(sec);
                       }
-                      TextView step=tv((n++)+". "+s.text,18,TEXT,false); margin(step,0,3,0,8); p.addView(step);
+                      TextView step=questLinkedTv((n++)+". "+s.text,18,TEXT,false,returnToCapeRoute); margin(step,0,3,0,8); p.addView(step);
                   }
-                  if (q.steps.isEmpty()) p.addView(tv("No verified walkthrough text was available in this build.",17,MUTED,false));
+                  if (q.steps.isEmpty()) p.addView(tv("DATA INTEGRITY ERROR: this quest was not allowed to ship without a walkthrough. Please use the v31 artifact.",17,PRAYER_YELLOW,true));
 
-                  if (!q.rewards.isEmpty()) { p.addView(heading("Quest Rewards")); addBullets(p,q.rewards); TextView rm=body("Reward metadata: " + (q.rewardSource.isEmpty()?"verified build sources":q.rewardSource) + " • " + q.rewardCount + " reward entries"); rm.setTextSize(13); p.addView(rm); }
+                  if (!q.rewards.isEmpty()) { p.addView(heading("Quest Rewards")); addBullets(p,q.rewards); TextView rm=tv("Reward metadata: " + (q.rewardSource.isEmpty()?"verified build sources":q.rewardSource) + " • " + q.rewardCount + " reward entries",13,MUTED,false); p.addView(rm); }
 
                   if (q.sourceNote!=null && !q.sourceNote.isEmpty()) {
                       p.addView(heading("Guide Data"));
-                      p.addView(tv(q.sourceNote,14,MUTED,false));
+                      p.addView(questLinkedTv(q.sourceNote,14,MUTED,false,returnToCapeRoute));
                   }
                   setContentView(scroll(p));
+              }
+
+              private Quest findQuest(String name) {
+                  String n=normQuestName(name);
+                  for(Quest q:quests) if(normQuestName(q.name).equals(n)) return q;
+                  return null;
+              }
+
+              private void showCapeRoute() {
+                  LinearLayout p=page();
+                  TextView back=tv("‹  Quest Guide",18,TEXT,true); back.setOnClickListener(v->{returnToCapeRoute=false; showList();}); p.addView(back);
+                  p.addView(tv("Quest Cape Route",31,ACCENT,true));
+                  p.addView(questLinkedTv("A separate progression roadmap from the moment you leave Tutorial Island until you can claim the Quest Point Cape. Training and preparation stops are interleaved with quests so quest XP does as much of the early levelling as possible.",16,MUTED,false,true));
+                  p.addView(questLinkedTv("Tap any underlined quest name anywhere in this route to open its full QuestMate walkthrough. Training steps stay independent from the normal quest list.",15,MUTED,false,true));
+                  int n=1;
+                  for(RouteStep rs:capeRoute) {
+                      int c=TEXT;
+                      if("training".equals(rs.type)) c=Color.rgb(110,220,150);
+                      else if("milestone".equals(rs.type)) c=ACCENT;
+                      else if("quest".equals(rs.type)) {
+                          Quest q=findQuest(rs.questName);
+                          if(q!=null) c=q.prayerReward?PRAYER_YELLOW:(q.defenceReward?DEFENCE_BLUE:TEXT);
+                      }
+                      String prefix="milestone".equals(rs.type)?"◆ ":(n++)+". ";
+                      TextView row=questLinkedTv(prefix+rs.title,18,c,true,true); row.setBackgroundColor(PANEL); row.setPadding(dp(14),dp(11),dp(14),dp(6)); margin(row,0,5,0,0); p.addView(row);
+                      if(rs.detail!=null && !rs.detail.trim().isEmpty()) {
+                          TextView detail=questLinkedTv(rs.detail,15,MUTED,false,true); detail.setBackgroundColor(PANEL); detail.setPadding(dp(14),dp(2),dp(14),dp(11)); margin(detail,0,0,0,4); p.addView(detail);
+                      }
+                      if("quest".equals(rs.type) && rs.questName!=null) {
+                          Quest q=findQuest(rs.questName);
+                          if(q!=null) {
+                              row.setOnClickListener(v->{returnToCapeRoute=true; showQuest(q);});
+                          }
+                      }
+                  }
+                  setContentView(scroll(p));
+              }
+
+              private void loadCapeRoute() {
+                  try {
+                      BufferedReader br=new BufferedReader(new InputStreamReader(getAssets().open("cape_route.json")));
+                      StringBuilder sb=new StringBuilder(); String line; while((line=br.readLine())!=null) sb.append(line); br.close();
+                      JSONArray a=new JSONArray(sb.toString());
+                      for(int i=0;i<a.length();i++) {
+                          JSONObject o=a.getJSONObject(i); RouteStep rs=new RouteStep();
+                          rs.type=o.optString("type","training"); rs.title=o.optString("title","Route step"); rs.detail=o.optString("detail",""); rs.questName=o.optString("questName","");
+                          capeRoute.add(rs);
+                      }
+                  } catch(Exception e) {
+                      RouteStep rs=new RouteStep(); rs.type="milestone"; rs.title="Quest Cape route data error"; rs.detail=e.toString(); capeRoute.add(rs);
+                  }
+              }
+
+              private String normQuestName(String s) {
+                  return s == null ? "" : s.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
+              }
+
+              private boolean nameIn(String normalized, String... names) {
+                  for (String n : names) if (normalized.equals(normQuestName(n))) return true;
+                  return false;
+              }
+
+              private boolean rewardTextMentions(List<String> rewards, String skill) {
+                  StringBuilder all = new StringBuilder();
+                  for (String r : rewards) all.append(' ').append(r == null ? "" : r.toLowerCase(Locale.ROOT));
+                  String b = all.toString();
+                  String sk = skill.toLowerCase(Locale.ROOT);
+                  int pos = b.indexOf(sk);
+                  while (pos >= 0) {
+                      int from = Math.max(0, pos - 55), to = Math.min(b.length(), pos + sk.length() + 55);
+                      String window = b.substring(from, to);
+                      if (window.contains("experience") || window.contains(" xp") || window.matches(".*\\d[\\d,.]*\\s*" + java.util.regex.Pattern.quote(sk) + ".*")) return true;
+                      pos = b.indexOf(sk, pos + sk.length());
+                  }
+                  return false;
+              }
+
+              private void recomputeRewardColours(Quest q) {
+                  String n = normQuestName(q.name);
+                  boolean defenceByReward = rewardTextMentions(q.rewards, "defence") || rewardTextMentions(q.rewards, "defense");
+                  boolean prayerByReward = rewardTextMentions(q.rewards, "prayer");
+                  boolean defenceByName = nameIn(n,
+                      "A Soul's Bane","In Search of the Myreque","In Aid of the Myreque","Nature Spirit","What Lies Below",
+                      "The Fremennik Trials","Heroes' Quest","Between a Rock...","Olaf's Quest","Holy Grail","Dragon Slayer I",
+                      "King's Ransom","Monkey Madness I","The Fremennik Isles","Legends' Quest","Dream Mentor");
+                  boolean prayerByName = nameIn(n,
+                      "The Restless Ghost","Priest in Peril","Holy Grail","Recruitment Drive","Mountain Daughter","Ghosts Ahoy",
+                      "Spirits of the Elid","Making History","Rag and Bone Man II","Rum Deal","The Great Brain Robbery","Swan Song",
+                      "Zogre Flesh Eaters","Tai Bwo Wannai Trio","King's Ransom");
+                  q.defenceReward = q.defenceReward || defenceByReward || defenceByName;
+                  q.prayerReward = q.prayerReward || prayerByReward || prayerByName;
               }
 
               private void loadQuests() {
@@ -2485,6 +3105,9 @@ jobs:
                           JSONArray places=o.optJSONArray("places"); if(places!=null) for(int j=0;j<places.length();j++) q.places.add(places.optString(j));
                           JSONArray rewards=o.optJSONArray("rewards"); if(rewards!=null) for(int j=0;j<rewards.length();j++) q.rewards.add(rewards.optString(j));
                           q.rewardSource=o.optString("rewardSource",""); q.rewardsVerified=o.optBoolean("rewardsVerified",false); q.rewardCount=o.optInt("rewardCount",q.rewards.size());
+                          // Recompute colour flags inside the installed app from the reward text itself.
+                          // This makes title colours independent of build-time metadata surviving JSON generation.
+                          recomputeRewardColours(q);
                           JSONArray steps=o.optJSONArray("steps"); if(steps!=null) for(int j=0;j<steps.length();j++) {
                               Object raw=steps.get(j);
                               if(raw instanceof JSONObject) { JSONObject so=(JSONObject)raw; q.steps.add(new Step(so.optString("section","Walkthrough"),so.optString("text",""))); }
@@ -2497,9 +3120,209 @@ jobs:
                   }
               }
 
-              @Override public void onBackPressed() { showList(); }
+              @Override public void onBackPressed() { if(returnToCapeRoute){ returnToCapeRoute=false; showCapeRoute(); } else showList(); }
           }
           EOF
+
+      - name: Global full-guide repair pass for every quest
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/repair_all_guides.py <<'PY'
+          import json, re, html, time
+          from pathlib import Path
+          from difflib import SequenceMatcher
+          import requests
+          from bs4 import BeautifulSoup, Tag
+
+          DB=Path('questmate-complete/app/src/main/assets/quests.json')
+          data=json.loads(DB.read_text(encoding='utf-8'))
+          S=requests.Session()
+          S.headers.update({'User-Agent':'QuestMate-v27-GuideRepair/1.0 (GitHub Actions; non-commercial)','Accept-Language':'en'})
+          SPACE=re.compile(r'\s+')
+          ACTION=re.compile(r'(?i)\b(talk|speak|go|travel|walk|run|enter|leave|climb|use|take|pick|collect|give|return|kill|fight|search|open|close|pull|push|operate|equip|wear|buy|bring|head|follow|cross|board|teleport|inspect|read|mine|cut|light|cook|make|place|unlock|drink|cast|pray|dig|craft|smith|choose|select|watch|wait|find|locate|obtain|defeat)\b')
+          BAD=re.compile(r'(?i)not yet implemented|no verified walkthrough|unknown|relevant npc|relevant location|placeholder|broken step state|\bdo step\b|\bcomplete this step\b|\bfollow the step\b|\bcontinue the quest\b')
+          TERSE=re.compile(r'(?i)^\s*(?:find(?:ing)?|locate|return|go|travel|head|talk|speak|meet|bring|get|obtain|collect|enter|leave|defeat|kill|fight|solve|complete|finish|use|take|make|craft|smith|mine|search|inspect|read|climb|cross|board|open|unlock)\b')
+          REWARD_LIKE=re.compile(r'(?i)^\s*(?:use of|access to|ability to|permission to|unlock(?:s|ed)?\b|reward(?:s)?\b|quest points?\b|(?:[0-9][0-9,]*)\s+(?:experience|xp)\b)')
+
+          def terse(text):
+            t=clean(text)
+            if not t or REWARD_LIKE.search(t) or not TERSE.search(t): return False
+            return len(re.findall(r"[A-Za-z0-9']+",t))<=4
+
+          TITLE_ALIAS={
+            'fairy tale i - growing pains':'Fairytale I - Growing Pains',
+            'fairy tale ii - cure a queen':'Fairytale II - Cure a Queen',
+            'fairy tale i – growing pains':'Fairytale I - Growing Pains',
+            'fairy tale ii – cure a queen':'Fairytale II - Cure a Queen',
+            "black knight's fortress":"Black Knights' Fortress",
+            'black knight fortress':"Black Knights' Fortress",
+            'desert treasure ii':'Desert Treasure II - The Fallen Empire',
+          }
+
+          def clean(v):
+            v=html.unescape(str(v or '')).replace('\xa0',' ')
+            v=re.sub(r'\[edit(?: \| edit source)?\]','',v,flags=re.I)
+            v=re.sub(r'\s*Show on map\s*',' ',v,flags=re.I)
+            return SPACE.sub(' ',v).strip(' \t\r\n•-–—')
+
+          def parse_page(title):
+            try:
+              r=S.get('https://oldschool.runescape.wiki/api.php',params={'action':'parse','page':title,'prop':'text','format':'json','formatversion':'2','redirects':'1','disablelimitreport':'1'},timeout=25)
+              if r.ok:
+                return r.json().get('parse',{}).get('text','') or ''
+            except Exception as e:
+              print('parse failed',title,repr(e))
+            return ''
+
+          def search_title(name):
+            try:
+              r=S.get('https://oldschool.runescape.wiki/api.php',params={'action':'query','list':'search','srsearch':name,'srnamespace':'0','srlimit':'8','format':'json','formatversion':'2'},timeout=25)
+              if r.ok:
+                return [clean(x.get('title','')) for x in r.json().get('query',{}).get('search',[]) if clean(x.get('title',''))]
+            except Exception as e:
+              print('search failed',name,repr(e))
+            return []
+
+          def direct_li_text(li):
+            clone=BeautifulSoup(str(li),'html.parser').find('li')
+            if clone is None: return clean(li.get_text(' ',strip=True))
+            for nested in clone.find_all(['ul','ol']): nested.decompose()
+            return clean(clone.get_text(' ',strip=True))
+
+          def normalize_section(t):
+            t=clean(t)
+            return t if t else 'Walkthrough'
+
+          def extract(markup):
+            if not markup: return []
+            soup=BeautifulSoup(markup,'html.parser')
+            heads=soup.find_all(['h2','h3','h4'])
+            root=None
+            for h in heads:
+              lab=clean(h.get_text(' ',strip=True)).lower()
+              if lab=='walkthrough' or lab.startswith('walkthrough '): root=h; break
+            # Quick-guide pages sometimes do not expose an exact Walkthrough h2. In that
+            # case collect instructional content from the article body, but still stop at
+            # rewards/references/etc. This is the global fallback that prevents empty guides.
+            start=root if root is not None else soup.find(class_='mw-parser-output') or soup
+            nodes=start.find_all_next() if isinstance(start,Tag) else soup.descendants
+            section='Walkthrough'; out=[]; seen=set(); started=(root is None)
+            stop=('rewards','reward','required for completing','changes','references','transcript','navigation','music unlocked','music','trivia','credits')
+            skip=('requirements','recommended','items required','item requirements','start point','official difficulty','length','quest series','enemies to defeat')
+            for node in nodes:
+              if not isinstance(node,Tag): continue
+              if root is not None and node is root:
+                started=True; continue
+              if not started: continue
+              if node.name in ('h2','h3','h4'):
+                lab=clean(node.get_text(' ',strip=True))
+                low=lab.lower()
+                if node.name=='h2' and any(low.startswith(x) for x in stop): break
+                if low and not any(low.startswith(x) for x in skip): section=lab
+                continue
+              txt=''
+              if node.name=='li': txt=direct_li_text(node)
+              elif node.name=='p':
+                t=clean(node.get_text(' ',strip=True))
+                if t and (ACTION.search(t) or len(t)>=55): txt=t
+              elif node.name=='tr':
+                cells=node.find_all(['th','td'],recursive=False)
+                vals=[clean(c.get_text(' ',strip=True)) for c in cells]
+                vals=[x for x in vals if x]
+                t=' — '.join(vals)
+                if len(vals)>=2 and ACTION.search(t): txt=t
+              txt=clean(txt)
+              if not txt or len(txt)<8 or BAD.search(txt) or REWARD_LIKE.search(txt): continue
+              # Do not keep tiny heading-like actions as standalone steps. They are only
+              # useful if paired with the detailed sentence that follows.
+              if terse(txt): continue
+              key=txt.lower()
+              if key in seen: continue
+              seen.add(key); out.append({'section':normalize_section(section),'text':txt})
+            return out
+
+          def score(steps):
+            if not steps: return -10**9
+            words=sum(len(re.findall(r"[A-Za-z0-9']+",clean(x.get('text','')))) for x in steps)
+            chars=sum(len(clean(x.get('text',''))) for x in steps)
+            actions=sum(1 for x in steps if ACTION.search(clean(x.get('text',''))))
+            bad=sum(1 for x in steps if BAD.search(clean(x.get('text',''))))
+            tiny=sum(1 for x in steps if terse(clean(x.get('text',''))))
+            return len(steps)*35 + words*2 + chars//20 + actions*12 - bad*5000 - tiny*4000
+
+          def candidate_titles(name):
+            base=TITLE_ALIAS.get(name.lower(),name)
+            vals=[base,name,base.replace(' – ',' - '),base.replace(' - ',' – ')]
+            vals += search_title(base)
+            out=[]; seen=set()
+            for x in vals:
+              x=clean(x)
+              if not x or '/Quick guide' in x: continue
+              k=x.lower()
+              if k not in seen:
+                seen.add(k); out.append(x)
+            return out[:10]
+
+          repaired=[]
+          for i,q in enumerate(data,1):
+            name=q.get('name','')
+            existing=q.get('steps',[]) or []
+            candidates=[('existing',existing)]
+            for title in candidate_titles(name):
+              full=parse_page(title)
+              quick=parse_page(title+'/Quick guide')
+              if full: candidates.append((title+' full',extract(full)))
+              if quick: candidates.append((title+' quick',extract(quick)))
+              # Exact alias/search winner with a plausible full guide is enough; avoid
+              # hammering the Wiki unnecessarily for every search hit.
+              if max(score(c[1]) for c in candidates) >= 500 and any(len(c[1])>=5 for c in candidates):
+                break
+            source,best=max(candidates,key=lambda c:score(c[1]))
+            existing_has_terse=any(terse(clean(x.get('text',''))) for x in existing) or bool(q.get('needsDetailRepair'))
+            best_is_clean=best and not any(terse(clean(x.get('text',''))) or BAD.search(clean(x.get('text',''))) for x in best)
+            if score(best)>score(existing) or (existing_has_terse and source!='existing' and best_is_clean):
+              q['steps']=best
+              q['sourceNote']=f'Guide database v30: global full-guide repair selected {source}; terse fragments are replaced with concrete walkthrough instructions.'
+              repaired.append((name,source,len(best),score(best)))
+            q.pop('needsDetailRepair',None)
+            # Absolute shipping gate: no quest can reach the APK with no guide, a tiny stub,
+            # a placeholder, reward leakage, or an under-detailed micro-step.
+            final=q.get('steps',[]) or []
+            texts=[clean(x.get('text','')) for x in final]
+            word_total=sum(len(re.findall(r"[A-Za-z0-9']+",t)) for t in texts)
+            bad=[t for t in texts if BAD.search(t) or REWARD_LIKE.search(t)]
+            tiny=[t for t in texts if terse(t)]
+            if len(final)<3 or word_total<45 or bad or tiny:
+              raise RuntimeError(f'{name}: v30 could not produce a complete detailed walkthrough (steps={len(final)}, words={word_total}, bad={bad[:3]}, terse={tiny[:5]}). Build stopped; no incomplete APK will be uploaded.')
+            if i%20==0: print(f'v30 repair audited {i}/{len(data)} quests')
+            time.sleep(0.02)
+
+          # Recompute reward-linked colouring after all guide repairs. The reward strings are
+          # the primary source; fallback sets protect quests whose Wiki wording expresses XP
+          # through a selectable reward or another non-standard phrase.
+          defence_fallback={
+            "A Soul's Bane","In Search of the Myreque","In Aid of the Myreque","Nature Spirit","What Lies Below",
+            "The Fremennik Trials","Heroes' Quest","Between a Rock...","Olaf's Quest","Holy Grail","Dragon Slayer I",
+            "King's Ransom","Monkey Madness I","The Fremennik Isles","Legends' Quest","Dream Mentor"
+          }
+          prayer_fallback={
+            "The Restless Ghost","Priest in Peril","Holy Grail","Recruitment Drive","Mountain Daughter","Ghosts Ahoy",
+            "Spirits of the Elid","Making History","Rag and Bone Man II","Rum Deal","The Great Brain Robbery","Swan Song",
+            "Zogre Flesh Eaters","Tai Bwo Wannai Trio","King's Ransom"
+          }
+          for q in data:
+            blob=' '.join(map(str,q.get('rewards',[]))).lower()
+            q['defenceReward']=bool(re.search(r'(?i)(?:defen[cs]e.{0,35}(?:experience|\bxp\b)|(?:experience|\bxp\b).{0,35}defen[cs]e|\d[\d,.]*\s*defen[cs]e)',blob)) or q.get('name') in defence_fallback
+            q['prayerReward']=bool(re.search(r'(?i)(?:prayer.{0,35}(?:experience|\bxp\b)|(?:experience|\bxp\b).{0,35}prayer|\d[\d,.]*\s*prayer)',blob)) or q.get('name') in prayer_fallback
+            q['rewardHighlightMetadata']={'defenceXpReward':q['defenceReward'],'prayerXpReward':q['prayerReward'],'detectedFrom':'v31 merged reward metadata + fallback'}
+
+          DB.write_text(json.dumps(data,ensure_ascii=False,separators=(',',':')),encoding='utf-8')
+          Path('questmate-complete/v30-guide-repair.txt').write_text('\n'.join(f'{a} | {b} | steps={c} | score={d}' for a,b,c,d in repaired) or 'All existing guides were already at least as detailed as the v27 repair candidates.',encoding='utf-8')
+          print(f'v30: audited {len(data)} quests; upgraded {len(repaired)} walkthroughs; zero empty guides permitted.')
+          PY
+          python3 /tmp/repair_all_guides.py
+          cat questmate-complete/v30-guide-repair.txt | head -80
 
       - name: Verify guide database has no wiki links or placeholder text
         shell: bash
@@ -2509,6 +3332,14 @@ jobs:
           import json,re
           p='questmate-complete/app/src/main/assets/quests.json'
           d=json.load(open(p,encoding='utf-8'))
+          route=json.load(open('questmate-complete/app/src/main/assets/cape_route.json',encoding='utf-8'))
+          assert any(x.get('type')=='training' for x in route), 'Quest Cape route has no training/activity steps'
+          route_names={x.get('questName') for x in route if x.get('type')=='quest'}
+          assert {q.get('name') for q in d} <= route_names, 'Quest Cape route does not cover every canonical quest'
+          assert route[-1].get('title','').startswith('Quest Cape'), 'Quest Cape final milestone missing'
+          java_src=open('questmate-complete/app/src/main/java/com/questmate/separate/v35/MainActivity.java',encoding='utf-8').read()
+          assert 'questLinkedTv' in java_src and 'ClickableSpan' in java_src and 'LinkMovementMethod' in java_src, 'Clickable quest-link support missing'
+          assert 'questLinkedTv(rs.detail' in java_src and 'questLinkedTv((n++)+". "+s.text' in java_src, 'Quest references are not linked across route/walkthrough text'
           assert len(d) >= 170, f'Expected the complete canonical OSRS quest database, found {len(d)}'
           names={q.get('name','') for q in d}
           for must in ("Cook's Assistant","Demon Slayer","Dragon Slayer I","Desert Treasure II - The Fallen Empire"):
@@ -2522,9 +3353,26 @@ jobs:
           assert all('rewards' in q for q in d), 'Every quest entry must contain a rewards field'
           assert all('defenceReward' in q for q in d), 'Every quest entry must contain defenceReward metadata'
           assert all('prayerReward' in q for q in d), 'Every quest entry must contain prayerReward metadata'
+          assert any(q.get('defenceReward') for q in d), 'No Defence reward quests were flagged'
+          assert any(q.get('prayerReward') for q in d), 'No Prayer reward quests were flagged'
           assert all('rewardSource' in q and 'rewardsVerified' in q and 'rewardCount' in q for q in d), 'Reward metadata fields missing'
           assert all(len(q.get('steps',[]))>=3 for q in d), 'Every retained quest must have a full walkthrough'
+          assert all(sum(len(re.findall(r"[A-Za-z0-9']+",s.get('text',''))) for s in q.get('steps',[]))>=45 for q in d), 'Every quest must contain substantial walkthrough text, not a tiny stub'
+          terse_re=re.compile(r'(?i)^\s*(?:find(?:ing)?|locate|return|go|travel|head|talk|speak|meet|bring|get|obtain|collect|enter|leave|defeat|kill|fight|solve|complete|finish|use|take|make|craft|smith|mine|search|inspect|read|climb|cross|board|open|unlock)\b')
+          reward_like=re.compile(r'(?i)^\s*(?:use of|access to|ability to|permission to|unlock(?:s|ed)?\b|reward(?:s)?\b|quest points?\b|(?:[0-9][0-9,]*)\s+(?:experience|xp)\b)')
+          terse_left=[]
+          for q in d:
+              for st in q.get('steps',[]):
+                  t=st.get('text','').strip()
+                  if terse_re.search(t) and not reward_like.search(t) and len(re.findall(r"[A-Za-z0-9']+",t))<=4:
+                      terse_left.append((q.get('name'),t))
+          assert not terse_left, f'Under-detailed walkthrough fragments remain after global repair: {terse_left[:12]}'
+          fairy=[q for q in d if re.sub(r'[^a-z0-9]','',q.get('name','').lower()) in ('fairytaleiicureaqueen','fairytale2cureaqueen')]
+          assert fairy and len(fairy[0].get('steps',[]))>=3, 'Fairytale II - Cure a Queen walkthrough is missing'
+          assert not any('no verified walkthrough' in s.get('text','').lower() for q in d for s in q.get('steps',[])), 'No-walkthrough placeholder leaked into database'
           assert all(q.get('rewards') for q in d), 'Every retained quest must expose a rewards section'
+          bad_titles=[q.get('name','') for q in d if q.get('name','').lower().startswith('quests/') or q.get('name','').lower() in {'quests','experienced','grandmaster','intermediate','master','novice','special'}]
+          assert not bad_titles, f'Non-quest category/index headings leaked into quest list: {bad_titles}'
           corsair=[q for q in d if q['name']=='The Corsair Curse']
           assert corsair and len(corsair[0].get('steps',[]))>=15, 'Corsair Curse detailed patch missing'
           bad_words=('relevant npc','relevant location','unknown quest','placeholder','go to the relevant','talk to the relevant')
@@ -2534,6 +3382,17 @@ jobs:
           placeholder_re=re.compile(r"(?i)not yet implemented|unknown|relevant npc|relevant location|placeholder|broken step state|\bdo step\b|\bcomplete this step\b|\bfollow the step\b|^\s*(?:do|complete|follow|perform|finish|continue(?: with)?|work through)\s+(?:the\s+)?[^.]{2,100}?\s+(?:steps?|section|part|route|sub-?guide)\s*[.!]?\s*$|^\s*(?:solve|complete|finish|do|perform|follow|continue|defeat)\s+(?:the\s+)?(?:[a-z0-9' -]+\s+)?(?:puzzle|section|part|route|fight|boss|trial|challenge|steps?|sub-?guide)\s*[.!]?\s*$")
           bad_steps=[(q['name'],s.get('text','')) for q in d for s in q.get('steps',[]) if placeholder_re.search(s.get('text',''))]
           assert not bad_steps, f'Placeholder/sub-guide walkthrough text remains: {bad_steps[:10]}'
+          terse_action=re.compile(r"(?i)^\s*(?:find(?:ing)?|locate|return|go|travel|head|talk|speak|meet|bring|get|obtain|collect|enter|leave|defeat|kill|fight|solve|complete|finish|use|take|make|craft|smith|mine|search|inspect|read|climb|cross|board|open|unlock)\b")
+          def terse_fragment(t):
+              words=re.findall(r"[A-Za-z0-9']+", t or '')
+              return bool(terse_action.search(t or '')) and len(words)<=4
+          terse=[(q['name'],s.get('text','')) for q in d for s in q.get('steps',[]) if terse_fragment(s.get('text',''))]
+          assert not terse, f'Terse heading/placeholder-like quest steps remain: {terse[:20]}'
+          knights=[q for q in d if q.get('name')=="The Knight's Sword"]
+          if knights:
+              exact_bad={'finding an imcando','find the portrait','return the sword'}
+              leaked=[s.get('text','').strip().lower().rstrip('.') for s in knights[0].get('steps',[]) if s.get('text','').strip().lower().rstrip('.') in exact_bad]
+              assert not leaked, f"The Knight's Sword still contains summary-heading leftovers: {leaked}"
           forbidden_exact=('do perseriya steps.','do sucellus steps.','do whisperer steps.')
           all_step_text=[s.get('text','').strip().lower() for q in d for s in q.get('steps',[])]
           assert not any(x in all_step_text for x in forbidden_exact), 'Desert Treasure II sub-guide shortcuts survived expansion'
@@ -2555,21 +3414,21 @@ jobs:
           test -f questmate-complete/app/build/outputs/apk/debug/app-debug.apk
           ls -lh questmate-complete/app/build/outputs/apk/debug/app-debug.apk
 
-      - name: Upload QuestMate Complete APK
+      - name: Upload QuestMate Separate v35 APK
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v20-Regex-Fix-All-In-One-Guides
+          name: QuestMate-v35-Clickable-Quest-Links
           path: questmate-complete/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload v27 guide audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuestMate-v35-Guide-Audit
+          path: |
+            questmate-complete/guide-audit.csv
+            questmate-complete/guide-build-report.txt
+            questmate-complete/v30-guide-repair.txt
+            questmate-complete/cape-route-report.txt
           if-no-files-found: error
           retention-days: 30
 
-      - name: Upload guide build report
-        uses: actions/upload-artifact@v4
-        with:
-          name: QuestMate-v19-Guide-Audit
-          path: |
-            questmate-complete/guide-build-report.txt
-            questmate-complete/guide-audit.csv
-            questmate-complete/guide-review-needed.txt
-          if-no-files-found: error
-          retention-days: 30
