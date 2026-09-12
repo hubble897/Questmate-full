@@ -1,4 +1,4 @@
-name: Build QuestMate Complete - Maximum Detail Guides v14
+name: Build QuestMate Complete - Fully Expanded Walkthroughs v15
 
 on:
   workflow_dispatch:
@@ -85,8 +85,8 @@ jobs:
                   applicationId 'com.questmate.complete'
                   minSdk 26
                   targetSdk 35
-                  versionCode 14
-                  versionName '14.0-maximum-detail-no-placeholders'
+                  versionCode 15
+                  versionName '15.0-fully-expanded-no-subguides'
               }
           }
           EOF
@@ -1317,6 +1317,8 @@ jobs:
           })
 
           BAD = re.compile(r'(?i)not yet implemented|unknown|relevant npc|relevant location|placeholder|wiki reference|https?://|\bdo step\b|\bcomplete this step\b|\bfollow the step\b|\bcontinue the quest\b|\bfinish this section\b')
+          SUBGUIDE = re.compile(r"(?i)^\s*(?:do|complete|follow|perform|finish|continue(?: with)?|work through)\s+(?:the\s+)?(.+?)\s+steps?\s*[.!]?\s*$")
+          VAGUE = re.compile(r"(?i)^\s*(?:solve|complete|finish|do|perform|follow|continue)\s+(?:the\s+)?(?:puzzle|section|part|route|fight|boss|trial|challenge|steps?)\s*[.!]?\s*$")
           GENERIC = re.compile(r'(?i)^\s*(?:do|complete|perform|finish|continue)\s+(?:the\s+)?(?:next\s+)?step\s*\.?\s*$|^\s*solve\s+(?:the\s+)?puzzle\s*\.?\s*$')
           SPACE = re.compile(r'\s+')
           ACTION = re.compile(r'(?i)\b(talk|speak|go|travel|walk|run|enter|leave|climb|use|take|pick|collect|give|return|kill|fight|search|open|close|pull|push|operate|equip|wear|buy|bring|head|follow|cross|board|teleport|inspect|read|mine|cut|light|cook|make|place|unlock|drink|cast|pray|dig|craft|smith|choose|select|watch|wait)\b')
@@ -1509,6 +1511,113 @@ jobs:
                               add_step(section, joined)
 
               return steps
+
+          def _norm_label(s):
+              s=clean(s).lower()
+              s=re.sub(r"['’]",'',s)
+              s=re.sub(r'[^a-z0-9]+',' ',s)
+              return SPACE.sub(' ',s).strip()
+
+          def extract_named_section(markup, label):
+              """Expand a named in-page quest subsection into real ordered actions.
+              This is what turns lines such as 'Do Perseriya steps.' into the actual
+              Perseriya route rather than leaving a sub-guide pointer in the app.
+              """
+              soup=safe_soup(markup)
+              if soup is None: return []
+              wanted=_norm_label(label)
+              if not wanted: return []
+              headings=soup.find_all(['h2','h3','h4','h5'])
+              chosen=None
+              for h in headings:
+                  got=_norm_label(h.get_text(' ',strip=True))
+                  if got==wanted:
+                      chosen=h; break
+              if chosen is None:
+                  for h in headings:
+                      got=_norm_label(h.get_text(' ',strip=True))
+                      if wanted in got or got in wanted:
+                          if min(len(got),len(wanted)) >= 4:
+                              chosen=h; break
+              if chosen is None: return []
+              level=int(chosen.name[1]); section=clean(chosen.get_text(' ',strip=True)) or label
+              out=[]; seen=set()
+              def add(value, sec=section):
+                  value=clean(value)
+                  if not value or len(value)<8 or BAD.search(value): return
+                  if SUBGUIDE.match(value) or VAGUE.match(value): return
+                  key=value.lower()
+                  if key in seen: return
+                  seen.add(key); out.append({'section':sec,'text':value})
+              for node in chosen.find_all_next():
+                  if not isinstance(node,Tag): continue
+                  if node.name in ('h2','h3','h4','h5'):
+                      node_level=int(node.name[1])
+                      if node_level <= level: break
+                      section=clean(node.get_text(' ',strip=True)) or section
+                      continue
+                  if node.name=='li': add(direct_li_text(node),section)
+                  elif node.name=='p':
+                      t=clean(node.get_text(' ',strip=True))
+                      if t and (ACTION.search(t) or len(t)>=45): add(t,section)
+                  elif node.name=='tr':
+                      cells=node.find_all(['th','td'],recursive=False)
+                      if len(cells)>=2:
+                          vals=[clean(c.get_text(' ',strip=True)) for c in cells]
+                          vals=[v for v in vals if v]
+                          joined=' — '.join(vals)
+                          if ACTION.search(joined) and len(joined)>=20: add(joined,section)
+              return out
+
+          def linked_page_for_label(markup, label):
+              """Find a wiki page linked by the shortcut label, if the detail lives off-page."""
+              soup=safe_soup(markup)
+              if soup is None: return ''
+              wanted=_norm_label(label)
+              for a in soup.find_all('a',href=True):
+                  txt=_norm_label(a.get_text(' ',strip=True))
+                  if not txt: continue
+                  if txt==wanted or wanted in txt or txt in wanted:
+                      href=a.get('href','')
+                      m=re.search(r'/w/([^#?]+)',href)
+                      if m:
+                          from urllib.parse import unquote
+                          return unquote(m.group(1)).replace('_',' ')
+              return ''
+
+          def expand_subguide_shortcuts(steps, full_markup, quick_markup, quest_title):
+              """Flatten every named sub-guide pointer into the main walkthrough.
+              No 'Do X steps' entry is allowed to survive. Expansion first searches
+              headings on the quest's full/quick guide, then follows a matching wiki link.
+              """
+              out=[]
+              for st in steps or []:
+                  txt=clean(st.get('text',''))
+                  m=SUBGUIDE.match(txt)
+                  if not m:
+                      out.append(st); continue
+                  label=clean(m.group(1)).rstrip(' .:;-')
+                  expanded=[]
+                  for markup in (full_markup,quick_markup):
+                      expanded=extract_named_section(markup,label)
+                      if expanded: break
+                  if not expanded:
+                      target=''
+                      for markup in (full_markup,quick_markup):
+                          target=linked_page_for_label(markup,label)
+                          if target: break
+                      if target:
+                          linked=wiki_parse(target)
+                          expanded=parse_walkthrough(linked)
+                          if not expanded:
+                              expanded=extract_named_section(linked,label)
+                  if not expanded:
+                      raise RuntimeError(f'{quest_title}: unresolved sub-guide shortcut: {txt}')
+                  out.extend(expanded)
+              # A second pass catches a shortcut exposed by an expanded subsection.
+              if any(SUBGUIDE.match(clean(x.get('text',''))) for x in out):
+                  return expand_subguide_shortcuts(out,full_markup,quick_markup,quest_title)
+              return out
 
           def parse_rewards(markup):
               soup=safe_soup(markup)
@@ -1920,6 +2029,13 @@ jobs:
               runelite=strip_generic_steps(qh_steps(q['name']))
               seed=strip_generic_steps(good_seed_steps(q))
 
+              # v15 rule for EVERY quest: named sub-guide shortcuts are illegal.
+              # Expand them into their real steps before scoring/selecting a source.
+              quick_steps=strip_generic_steps(expand_subguide_shortcuts(quick_steps,full,quick,q['name']))
+              full_steps=strip_generic_steps(expand_subguide_shortcuts(full_steps,full,quick,q['name']))
+              runelite=strip_generic_steps(expand_subguide_shortcuts(runelite,full,quick,q['name']))
+              seed=strip_generic_steps(expand_subguide_shortcuts(seed,full,quick,q['name']))
+
               # v14 chooses the most detailed complete source, not merely the first source
               # that passes a minimum quality threshold. This is important for long quests:
               # a 70-step full walkthrough must beat a 10-step summary.
@@ -1957,7 +2073,9 @@ jobs:
                   q=patch_demon_slayer(q)
               if norm_name in ('deserttreasureiithefallenempire','deserttreasure2thefallenempire','deserttreasureii'):
                   q=patch_desert_treasure_ii(q,full_steps,quick_steps,runelite)
-              q['steps']=strip_generic_steps(q.get('steps',[]))
+              q['steps']=strip_generic_steps(expand_subguide_shortcuts(q.get('steps',[]),full,quick,q['name']))
+              if any(SUBGUIDE.match(clean(x.get('text',''))) or VAGUE.match(clean(x.get('text',''))) for x in q['steps']):
+                  raise RuntimeError(f"{q['name']}: vague/sub-guide instruction survived final expansion")
 
               # Every quest page must expose a rewards section. Live OSRS Wiki data is preferred;
               # if a source is temporarily unavailable, preserve a clear audit marker instead of silently omitting it.
@@ -1998,7 +2116,7 @@ jobs:
               f'Embedded seed fallbacks: {counts["seed"]}\n'
               f'Guides flagged for manual review: {counts["weak"]}\n'
               f'Entries missing parsed rewards: {counts["missing_rewards"]}\n'
-              'v14 selects the most detailed available ordered walkthrough, strips generic placeholder steps, keeps only real quests, and applies explicit fixes for Demon Slayer and Desert Treasure II.\n'
+              'v15 selects the most detailed available ordered walkthrough and recursively expands named sub-guides into the main quest walkthrough for every quest. No Do-X-steps shortcut is permitted.\n'
               'Defence XP quests are marked blue; Prayer XP quests are marked yellow. See guide-audit.csv for filtered entries.\n'
               'No external wiki links are stored in quests.json.\n', encoding='utf-8')
           print(REPORT.read_text())
@@ -2259,13 +2377,16 @@ jobs:
           joined=json.dumps(d).lower()
           assert not any(x in joined for x in bad_words), 'Vague/filler quest text detected'
           weak=[q['name'] for q in d if len(q.get('steps',[]))<3]
-          placeholder_re=re.compile(r'(?i)not yet implemented|unknown|relevant npc|relevant location|placeholder|\bdo step\b|\bcomplete this step\b|\bfollow the step\b')
+          placeholder_re=re.compile(r"(?i)not yet implemented|unknown|relevant npc|relevant location|placeholder|\bdo step\b|\bcomplete this step\b|\bfollow the step\b|^\s*(?:do|complete|follow|perform|finish|continue(?: with)?|work through)\s+(?:the\s+)?[^.]{2,80}?\s+steps?\s*[.!]?\s*$|^\s*(?:solve|complete|finish|do|perform|follow|continue)\s+(?:the\s+)?(?:puzzle|section|part|route|fight|boss|trial|challenge|steps?)\s*[.!]?\s*$")
           bad_steps=[(q['name'],s.get('text','')) for q in d for s in q.get('steps',[]) if placeholder_re.search(s.get('text',''))]
-          assert not bad_steps, f'Placeholder walkthrough text remains: {bad_steps[:5]}'
+          assert not bad_steps, f'Placeholder/sub-guide walkthrough text remains: {bad_steps[:10]}'
+          forbidden_exact=('do perseriya steps.','do sucellus steps.','do whisperer steps.')
+          all_step_text=[s.get('text','').strip().lower() for q in d for s in q.get('steps',[])]
+          assert not any(x in all_step_text for x in forbidden_exact), 'Desert Treasure II sub-guide shortcuts survived expansion'
           demon=[q for q in d if re.sub(r'[^a-z0-9]','',q.get('name','').lower())=='demonslayer']
           assert demon and any('Carlem' in x.get('text','') and 'Gabindo' in x.get('text','') and 'order is random' in x.get('text','').lower() for x in demon[0]['steps']), 'Demon Slayer incantation guidance missing'
           dt2=[q for q in d if re.sub(r'[^a-z0-9]','',q.get('name','').lower()) in ('deserttreasureiithefallenempire','deserttreasure2thefallenempire','deserttreasureii')]
-          assert dt2 and len(dt2[0].get('steps',[]))>=25, 'Desert Treasure II guide is still too short'
+          assert dt2 and len(dt2[0].get('steps',[]))>=45, 'Desert Treasure II fully-expanded guide is still too short'
           print(f'Validated {len(d)} quests-only entries. Guides with fewer than 3 extracted steps: {len(weak)}')
           print('Short-guide examples:', weak[:15])
           PY
@@ -2283,7 +2404,7 @@ jobs:
       - name: Upload QuestMate Complete APK
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v13-Quests-Only-Defence-Prayer
+          name: QuestMate-v15-Fully-Expanded-All-Quest-Walkthroughs
           path: questmate-complete/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
@@ -2291,7 +2412,7 @@ jobs:
       - name: Upload guide build report
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v13-Guide-Audit
+          name: QuestMate-v15-Guide-Audit
           path: |
             questmate-complete/guide-build-report.txt
             questmate-complete/guide-audit.csv
