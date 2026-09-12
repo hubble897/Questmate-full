@@ -1,4 +1,4 @@
-name: Build QuestMate Complete - WGS + Global Summary Step Fix v24
+name: Build QuestMate Complete - Java Build Fix v25
 
 on:
   workflow_dispatch:
@@ -85,8 +85,8 @@ jobs:
                   applicationId 'com.questmate.complete'
                   minSdk 26
                   targetSdk 35
-                  versionCode 24
-                  versionName '24.0-wgs-global-summary-step-fix'
+                  versionCode 25
+                  versionName '25.0-java-build-fix'
               }
           }
           EOF
@@ -2618,7 +2618,7 @@ jobs:
                   }
                   if (q.steps.isEmpty()) p.addView(tv("No verified walkthrough text was available in this build.",17,MUTED,false));
 
-                  if (!q.rewards.isEmpty()) { p.addView(heading("Quest Rewards")); addBullets(p,q.rewards); TextView rm=body("Reward metadata: " + (q.rewardSource.isEmpty()?"verified build sources":q.rewardSource) + " • " + q.rewardCount + " reward entries"); rm.setTextSize(13); p.addView(rm); }
+                  if (!q.rewards.isEmpty()) { p.addView(heading("Quest Rewards")); addBullets(p,q.rewards); TextView rm=tv("Reward metadata: " + (q.rewardSource.isEmpty()?"verified build sources":q.rewardSource) + " • " + q.rewardCount + " reward entries",13,MUTED,false); p.addView(rm); }
 
                   if (q.sourceNote!=null && !q.sourceNote.isEmpty()) {
                       p.addView(heading("Guide Data"));
@@ -2716,7 +2716,7 @@ jobs:
       - name: Upload QuestMate Complete APK
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v24-WGS-and-Global-Summary-Step-Fix
+          name: QuestMate-v25-Java-Build-Fix
           path: questmate-complete/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
@@ -2724,7 +2724,7 @@ jobs:
       - name: Upload guide build report
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v19-Guide-Audit
+          name: QuestMate-v25-Guide-Audit
           path: |
             questmate-complete/guide-build-report.txt
             questmate-complete/guide-audit.csv
