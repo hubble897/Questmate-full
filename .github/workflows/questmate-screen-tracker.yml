@@ -86,7 +86,7 @@ jobs:
                   minSdk 26
                   targetSdk 35
                   versionCode 10
-                  versionName '12.0-detailed-guides-defence-blue'
+                  versionName '13.0-quests-only-defence-prayer-colours'
               }
           }
           EOF
@@ -1765,11 +1765,49 @@ jobs:
               "Dream Mentor"
           }
 
+          # Direct Prayer XP rewards are normally detected from parsed Wiki/RuneLite rewards.
+          # This small fallback protects well-known direct Prayer-XP quests if source wording changes.
+          PRAYER_REWARD_FALLBACK={
+              "The Restless Ghost","Priest in Peril","Holy Grail","Recruitment Drive",
+              "Mountain Daughter","Ghosts Ahoy","Spirits of the Elid","Making History",
+              "Rag and Bone Man II","Rum Deal","The Great Brain Robbery","Swan Song",
+              "Zogre Flesh Eaters","Tai Bwo Wannai Trio","King's Ransom"
+          }
+
+          def reward_blob(q):
+              return ' '.join(str(x) for x in q.get('rewards',[])).lower()
+
           def has_defence_reward(q):
-              blob=' '.join(str(x) for x in q.get('rewards',[])).lower()
+              blob=reward_blob(q)
               direct=(('defence' in blob or 'defense' in blob) and
                       ('experience' in blob or 'xp' in blob))
               return direct or q.get('name','') in DEFENCE_REWARD_FALLBACK
+
+          def has_prayer_reward(q):
+              blob=reward_blob(q)
+              direct=('prayer' in blob and ('experience' in blob or 'xp' in blob))
+              return direct or q.get('name','') in PRAYER_REWARD_FALLBACK
+
+          def has_real_reward(q):
+              rewards=[clean(x) for x in q.get('rewards',[]) if clean(x)]
+              if not rewards: return False
+              blob=' '.join(rewards).lower()
+              bad=('could not be verified','unavailable','unknown reward','reward data')
+              return not any(x in blob for x in bad)
+
+          def has_quest_point_reward(q):
+              # Main OSRS quests award Quest Point(s); miniquests and scraper noise do not.
+              blob=reward_blob(q)
+              return bool(re.search(r'\bquest\s+points?\b|\bqp\b', blob, re.I))
+
+          def is_complete_main_quest(q):
+              # Strict v13 gate: only real main quests with a useful walkthrough and real rewards.
+              # Requiring a Quest Point reward deliberately excludes miniquests, subpages,
+              # categories, guides, achievement pages and other non-quest scraper entries.
+              return (len(q.get('steps',[])) >= 3 and
+                      quality(q.get('steps',[])) >= 45 and
+                      has_real_reward(q) and
+                      has_quest_point_reward(q))
 
           data=json.loads(SRC.read_text(encoding='utf-8'))
           rebuilt=[]; audit=[]
@@ -1837,20 +1875,25 @@ jobs:
                   q['rewards']=['Reward data could not be verified during this build; see guide-audit.csv and rebuild when OSRS Wiki is reachable.']
 
               q['defenceReward']=has_defence_reward(q)
+              q['prayerReward']=has_prayer_reward(q)
 
               score=quality(q['steps'])
               if score<45: counts['weak']+=1
               if not q['rewards']: counts['missing_rewards']+=1
               q['sourceNote']=f'Guide assembled from {source}; OSRS Wiki and RuneLite data are cross-checked where available. Quality score: {score}.'
-              status='OK' if (len(q['steps'])>=3 and score>=45 and q.get('rewards')) else 'REVIEW'
+              keep=is_complete_main_quest(q)
+              status='OK' if keep else 'FILTERED'
               audit.append([q['name'],source,len(q['steps']),score,len(q['rewards']),status])
-              rebuilt.append(q)
+              if keep:
+                  rebuilt.append(q)
+              else:
+                  print(f'Filtered non-quest/incomplete entry: {q["name"]} | steps={len(q["steps"])} score={score} rewards={len(q["rewards"])}')
               if idx%20==0: print(f'Processed {idx}/{len(data)} quests...')
               time.sleep(0.04)
 
-          review_rows=[r for r in audit if r[-1]=='REVIEW']
+          review_rows=[r for r in audit if r[-1]!='OK']
           Path('questmate-complete/guide-review-needed.txt').write_text(
-              '\n'.join(f'{r[0]} | source={r[1]} | steps={r[2]} | score={r[3]} | rewards={r[4]}' for r in review_rows) or 'All quest entries passed the minimum completeness gate.',
+              '\n'.join(f'{r[0]} | source={r[1]} | steps={r[2]} | score={r[3]} | rewards={r[4]}' for r in review_rows) or 'All retained quest entries passed the strict quests-only completeness gate.',
               encoding='utf-8')
 
           rebuilt.sort(key=lambda x:x.get('name','').lower())
@@ -1859,13 +1902,14 @@ jobs:
               w=csv.writer(f); w.writerow(['quest','primary_source','step_count','quality_score','reward_count','status']); w.writerows(audit)
           REPORT.write_text(
               'QuestMate guide build report\n'
-              f'Total entries: {len(rebuilt)}\n'
+              f'Retained main quests: {len(rebuilt)}\n'
               f'OSRS Wiki primary guides: {counts["wiki"]}\n'
               f'RuneLite Quest Helper primary guides: {counts["runelite"]}\n'
               f'Embedded seed fallbacks: {counts["seed"]}\n'
               f'Guides flagged for manual review: {counts["weak"]}\n'
               f'Entries missing parsed rewards: {counts["missing_rewards"]}\n'
-              'Every entry was individually scored for step count/detail and RuneLite rewards were parsed when available. See guide-audit.csv for the per-quest result.\n'
+              'v13 keeps only entries with 3+ walkthrough steps, a passing detail score, verified rewards, and an explicit Quest Point reward. This removes miniquests and non-quest scraper entries.\n'
+              'Defence XP quests are marked blue; Prayer XP quests are marked yellow. See guide-audit.csv for filtered entries.\n'
               'No external wiki links are stored in quests.json.\n', encoding='utf-8')
           print(REPORT.read_text())
           PYEOF
@@ -1905,9 +1949,17 @@ jobs:
                   ]
                   q['rewards']=['3 Quest points','2,500 coins']
           defence_names={"A Soul's Bane","In Search of the Myreque","In Aid of the Myreque","Nature Spirit","What Lies Below","The Fremennik Trials","Heroes' Quest","Between a Rock...","Olaf's Quest","Holy Grail","Dragon Slayer I","King's Ransom","Monkey Madness I","The Fremennik Isles","Legends' Quest","Dream Mentor"}
+          prayer_names={"The Restless Ghost","Priest in Peril","Holy Grail","Recruitment Drive","Mountain Daughter","Ghosts Ahoy","Spirits of the Elid","Making History","Rag and Bone Man II","Rum Deal","The Great Brain Robbery","Swan Song","Zogre Flesh Eaters","Tai Bwo Wannai Trio","King's Ransom"}
+          kept=[]
           for q in data:
               blob=' '.join(str(x) for x in q.get('rewards',[])).lower()
               q['defenceReward']=q.get('name','') in defence_names or ((('defence' in blob) or ('defense' in blob)) and (('experience' in blob) or ('xp' in blob)))
+              q['prayerReward']=q.get('name','') in prayer_names or (('prayer' in blob) and (('experience' in blob) or ('xp' in blob)))
+              real_reward=bool(q.get('rewards')) and 'could not be verified' not in blob and 'reward data' not in blob
+              has_qp=bool(re.search(r'\bquest\s+points?\b|\bqp\b',blob,re.I))
+              if len(q.get('steps',[]))>=3 and real_reward and has_qp:
+                  kept.append(q)
+          data=kept
           p.write_text(json.dumps(data,ensure_ascii=False,separators=(',',':')))
           PYFALLBACK
             cat > questmate-complete/guide-build-report.txt <<'REPORT'
@@ -1954,6 +2006,7 @@ jobs:
               private static final int MUTED = Color.rgb(184,190,199);
               private static final int ACCENT = Color.rgb(242,184,68);
               private static final int DEFENCE_BLUE = Color.rgb(80,170,255);
+              private static final int PRAYER_YELLOW = Color.rgb(255,215,70);
               private final List<Quest> quests = new ArrayList<>();
               private LinearLayout root;
 
@@ -1964,6 +2017,7 @@ jobs:
               static class Quest {
                   String name, start, sourceNote;
                   boolean defenceReward = false;
+                  boolean prayerReward = false;
                   List<String> items = new ArrayList<>();
                   List<String> places = new ArrayList<>();
                   List<String> rewards = new ArrayList<>();
@@ -2004,7 +2058,7 @@ jobs:
               private void showList() {
                   LinearLayout p=page(); root=p;
                   TextView title=tv("QuestMate Complete",30,TEXT,true); p.addView(title);
-                  TextView sub=tv(quests.size()+" quest entries • detailed in-app walkthroughs • blue = Defence XP reward",15,MUTED,false); p.addView(sub);
+                  TextView sub=tv(quests.size()+" verified quests • blue = Defence XP • yellow = Prayer XP",15,MUTED,false); p.addView(sub);
                   EditText search=new EditText(this); search.setHint("Search quests..."); search.setHintTextColor(MUTED); search.setTextColor(TEXT);
                   search.setSingleLine(true); search.setBackgroundColor(PANEL); search.setPadding(dp(14),dp(12),dp(14),dp(12)); margin(search,0,14,0,10); p.addView(search);
                   LinearLayout list=new LinearLayout(this); list.setOrientation(LinearLayout.VERTICAL); p.addView(list);
@@ -2012,8 +2066,9 @@ jobs:
                       list.removeAllViews(); String q=search.getText().toString().trim().toLowerCase(Locale.ROOT); int shown=0;
                       for (Quest quest: quests) {
                           if (!q.isEmpty() && !quest.name.toLowerCase(Locale.ROOT).contains(q)) continue;
-                          String rowLabel=quest.name + (quest.defenceReward ? "   • DEFENCE XP" : "");
-                          TextView row=tv(rowLabel,19,quest.defenceReward ? DEFENCE_BLUE : TEXT,true); row.setBackgroundColor(PANEL); row.setPadding(dp(14),dp(13),dp(14),dp(13)); margin(row,0,4,0,4);
+                          String rowLabel=quest.name + (quest.defenceReward ? "   • DEFENCE XP" : "") + (quest.prayerReward ? "   • PRAYER XP" : "");
+                          int rowColor = quest.prayerReward ? PRAYER_YELLOW : (quest.defenceReward ? DEFENCE_BLUE : TEXT);
+                          TextView row=tv(rowLabel,19,rowColor,true); row.setBackgroundColor(PANEL); row.setPadding(dp(14),dp(13),dp(14),dp(13)); margin(row,0,4,0,4);
                           row.setOnClickListener(v->showQuest(quest)); list.addView(row); shown++;
                       }
                       if (shown==0) list.addView(tv("No quests match your search.",17,MUTED,false));
@@ -2029,8 +2084,10 @@ jobs:
               private void showQuest(Quest q) {
                   LinearLayout p=page();
                   TextView back=tv("‹  All quests",18,TEXT,true); back.setOnClickListener(v->showList()); p.addView(back);
-                  TextView title=tv(q.name,31,q.defenceReward ? DEFENCE_BLUE : TEXT,true); margin(title,0,6,0,8); p.addView(title);
-                  if (q.defenceReward) p.addView(tv("DEFENCE XP REWARD • shown blue in the quest log",15,DEFENCE_BLUE,true));
+                  int titleColor = q.prayerReward ? PRAYER_YELLOW : (q.defenceReward ? DEFENCE_BLUE : TEXT);
+                  TextView title=tv(q.name,31,titleColor,true); margin(title,0,6,0,8); p.addView(title);
+                  if (q.defenceReward) p.addView(tv("DEFENCE XP REWARD • blue marker",15,DEFENCE_BLUE,true));
+                  if (q.prayerReward) p.addView(tv("PRAYER XP REWARD • yellow heading/marker",15,PRAYER_YELLOW,true));
 
                   if (!q.items.isEmpty()) { p.addView(heading("Items Required")); addBullets(p,q.items); }
                   if (!q.places.isEmpty()) { p.addView(heading("Places")); addBullets(p,q.places); }
@@ -2064,6 +2121,7 @@ jobs:
                           JSONObject o=a.getJSONObject(i); Quest q=new Quest();
                           q.name=o.optString("name","Quest"); q.start=o.optString("start",""); q.sourceNote=o.optString("sourceNote","");
                           q.defenceReward=o.optBoolean("defenceReward",false);
+                          q.prayerReward=o.optBoolean("prayerReward",false);
                           JSONArray items=o.optJSONArray("items"); if(items!=null) for(int j=0;j<items.length();j++) q.items.add(items.optString(j));
                           JSONArray places=o.optJSONArray("places"); if(places!=null) for(int j=0;j<places.length();j++) q.places.add(places.optString(j));
                           JSONArray rewards=o.optJSONArray("rewards"); if(rewards!=null) for(int j=0;j<rewards.length();j++) q.rewards.add(rewards.optString(j));
@@ -2091,7 +2149,7 @@ jobs:
           import json,re
           p='questmate-complete/app/src/main/assets/quests.json'
           d=json.load(open(p,encoding='utf-8'))
-          assert len(d) >= 170, f'Expected full quest database, found {len(d)}'
+          assert len(d) >= 150, f'Expected a large quests-only database, found {len(d)}' # strict filtering may remove entries whose live guide/reward data failed
           raw=open(p,encoding='utf-8').read().lower()
           assert 'oldschool.runescape.wiki' not in raw
           assert 'wikiurl' not in raw
@@ -2100,13 +2158,18 @@ jobs:
           assert cooks and any('hopper controls' in s['text'].lower() for s in cooks[0]['steps'])
           assert all('rewards' in q for q in d), 'Every quest entry must contain a rewards field'
           assert all('defenceReward' in q for q in d), 'Every quest entry must contain defenceReward metadata'
+          assert all('prayerReward' in q for q in d), 'Every quest entry must contain prayerReward metadata'
+          assert all(len(q.get('steps',[]))>=3 for q in d), 'Every retained quest must have a full walkthrough'
+          assert all(q.get('rewards') for q in d), 'Every retained quest must have rewards'
+          assert all(re.search(r'\bquest\s+points?\b|\bqp\b',' '.join(q.get('rewards',[])),re.I) for q in d), 'Non-main-quest entry detected: every retained quest must award Quest Point(s)'
+          assert all('could not be verified' not in ' '.join(q.get('rewards',[])).lower() for q in d), 'Unverified reward entry leaked through strict filter'
           corsair=[q for q in d if q['name']=='The Corsair Curse']
           assert corsair and len(corsair[0].get('steps',[]))>=15, 'Corsair Curse detailed patch missing'
           bad_words=('relevant npc','relevant location','unknown quest','placeholder','go to the relevant','talk to the relevant')
           joined=json.dumps(d).lower()
           assert not any(x in joined for x in bad_words), 'Vague/filler quest text detected'
           weak=[q['name'] for q in d if len(q.get('steps',[]))<3]
-          print(f'Validated {len(d)} quest entries. Guides with fewer than 3 extracted steps: {len(weak)}')
+          print(f'Validated {len(d)} quests-only entries. Guides with fewer than 3 extracted steps: {len(weak)}')
           print('Short-guide examples:', weak[:15])
           PY
           cat questmate-complete/guide-build-report.txt
@@ -2123,7 +2186,7 @@ jobs:
       - name: Upload QuestMate Complete APK
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-Complete-Full-Guide-Overhaul
+          name: QuestMate-v13-Quests-Only-Defence-Prayer
           path: questmate-complete/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
@@ -2131,7 +2194,7 @@ jobs:
       - name: Upload guide build report
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-Guide-Build-Report
+          name: QuestMate-v13-Guide-Audit
           path: |
             questmate-complete/guide-build-report.txt
             questmate-complete/guide-audit.csv
