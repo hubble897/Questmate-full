@@ -1,4 +1,4 @@
-name: Build QuestMate Separate v36 - Clickable Quest Links
+name: Build QuestMate Separate v37 - Clickable Quest Links
 
 on:
   workflow_dispatch:
@@ -37,7 +37,7 @@ jobs:
           set -euo pipefail
 
           rm -rf questmate-complete
-          mkdir -p questmate-complete/app/src/main/java/com/questmate/separate/v36
+          mkdir -p questmate-complete/app/src/main/java/com/questmate/separate/v37
           mkdir -p questmate-complete/app/src/main/assets
           mkdir -p questmate-complete/app/src/main/res/values
 
@@ -78,22 +78,22 @@ jobs:
           }
 
           android {
-              namespace 'com.questmate.separate.v36'
+              namespace 'com.questmate.separate.v37'
               compileSdk 35
 
               defaultConfig {
-                  applicationId 'com.questmate.separate.v36'
+                  applicationId 'com.questmate.separate.v37'
                   minSdk 26
                   targetSdk 35
-                  versionCode 36
-                  versionName '36.0-fixed-all-quests-clickable'
+                  versionCode 37
+                  versionName '37.0-fixed-all-quests-clickable'
               }
           }
           EOF
 
           cat > questmate-complete/app/src/main/res/values/strings.xml <<'EOF'
           <resources>
-              <string name="app_name">QuestMate Separate v36</string>
+              <string name="app_name">QuestMate Separate v37</string>
           </resources>
           EOF
 
@@ -113,7 +113,7 @@ jobs:
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <application
                   android:allowBackup="true"
-                  android:label="QuestMate Separate v36"
+                  android:label="QuestMate Separate v37"
                   android:theme="@style/AppTheme"
                   android:usesCleartextTraffic="false">
                   <activity
@@ -677,7 +677,7 @@ jobs:
           4Dx+YOMm3G6XRdk0bue0XGTpj3iY1LNuQyT48/mG9l0AcFMYILc/Fp5naQ2zVu86U7gdqedRzVjP
           TdS8m2KW0I1Oq5U7zDvcOnKggPvukrnf6cZivlMHk/FO7dHQde5yB2XbJwfvDn118MaeD++5N/Dt
           PZ0Nfn7w3u4I2BuvaoGq7ZUuisNC8hpnHSYgSyI8rQFHejytCUdQPK2Jjph4WjOOSHl8ExY2MUsA
-          rdbZBwtjwQ6V36uPPCthwA9Od/dCA/BtUE6lLquTTd5j7glaqZ3F1dfkmfpINRgtBKE8EAjXh389
+          rdbZBwtjwQ6V35uPPCthwA9Od/dCA/BtUE6lLquTTd5j7glaqZ3F1dfkmfpINRgtBKE8EAjXh389
           T6tlqQuQ2rcB+iGFhjma0YbV5r1xktD1LE4XGismifesPudz+7lqWRgvtIpO02l0Mn6Q6pD+gpai
           qcG8to6yZrHsB9Z4F5cLppyO88Y2cL5M6xkty1TQLy30+bl9eEIBHqfDoa0b+HiADX0Tlm5hY+S9
           J6t1HU05P7wZOvZvH0gpU2E/tojjFpwEJG7t2Gpf3qgyWip0+GWT1WUcqX4rzqZloDEMSDRz1CW5
@@ -2821,8 +2821,8 @@ jobs:
           PYEOF
           python3 /tmp/build_cape_route.py
 
-          cat > questmate-complete/app/src/main/java/com/questmate/separate/v36/MainActivity.java <<'EOF'
-          package com.questmate.separate.v36;
+          cat > questmate-complete/app/src/main/java/com/questmate/separate/v37/MainActivity.java <<'EOF'
+          package com.questmate.separate.v37;
 
           import android.app.Activity;
           import android.os.Bundle;
@@ -2962,7 +2962,7 @@ jobs:
 
               private void showList() {
                   LinearLayout p=page(); root=p;
-                  TextView title=tv("QuestMate Separate v36",30,TEXT,true); p.addView(title);
+                  TextView title=tv("QuestMate Separate v37",30,TEXT,true); p.addView(title);
                   TextView sub=tv(quests.size()+" verified quests • BLUE titles = Defence XP • YELLOW titles = Prayer XP",15,MUTED,false); p.addView(sub);
                   TextView cape=tv("QUEST CAPE ROUTE  →",20,ACCENT,true); cape.setBackgroundColor(PANEL); cape.setPadding(dp(16),dp(15),dp(16),dp(15)); margin(cape,0,14,0,8); cape.setOnClickListener(v->showCapeRoute()); p.addView(cape);
                   TextView capeSub=tv("Post-Tutorial Island → efficient questing/training order → Quest Point Cape",14,MUTED,false); margin(capeSub,0,0,0,10); p.addView(capeSub);
@@ -3360,7 +3360,7 @@ jobs:
           route_names={x.get('questName') for x in route if x.get('type')=='quest'}
           assert {q.get('name') for q in d} <= route_names, 'Quest Cape route does not cover every canonical quest'
           assert route[-1].get('title','').startswith('Quest Cape'), 'Quest Cape final milestone missing'
-          java_src=open('questmate-complete/app/src/main/java/com/questmate/separate/v36/MainActivity.java',encoding='utf-8').read()
+          java_src=open('questmate-complete/app/src/main/java/com/questmate/separate/v37/MainActivity.java',encoding='utf-8').read()
           assert 'questLinkedTv' in java_src and 'ClickableSpan' in java_src and 'LinkMovementMethod' in java_src, 'Clickable quest-link support missing'
           assert 'questLinkedTv(rs.detail' in java_src and 'questLinkedTv((n++)+". "+s.text' in java_src, 'Quest references are not linked across route/walkthrough text'
           assert len(d) >= 170, f'Expected the complete canonical OSRS quest database, found {len(d)}'
@@ -3437,16 +3437,16 @@ jobs:
           test -f questmate-complete/app/build/outputs/apk/debug/app-debug.apk
           ls -lh questmate-complete/app/build/outputs/apk/debug/app-debug.apk
 
-      - name: Upload QuestMate Separate v36 APK
+      - name: Upload QuestMate Separate v37 APK
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v36-Clickable-Quest-Links
+          name: QuestMate-v37-Clickable-Quest-Links
           path: questmate-complete/app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload v27 guide audit
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v36-Guide-Audit
+          name: QuestMate-v37-Guide-Audit
           path: |
             questmate-complete/guide-audit.csv
             questmate-complete/guide-build-report.txt
