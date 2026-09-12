@@ -1,4 +1,4 @@
-name: QuestMate v45 - REWARD TEXT COLOURS + QUEST CAPE
+name: QuestMate v46 - FINAL reward scan + Quest Cape route
 
 on:
   workflow_dispatch:
@@ -34,7 +34,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "=================================================="
-          echo "QUESTMATE V45 WORKFLOW IS RUNNING"
+          echo "QUESTMATE V46 WORKFLOW IS RUNNING"
           echo "Stable Java path: com/questmate/app/MainActivity.java"
           echo "=================================================="
 
@@ -80,22 +80,22 @@ jobs:
           }
 
           android {
-              namespace 'com.questmate.v45fixed'
+              namespace 'com.questmate.v46final'
               compileSdk 35
 
               defaultConfig {
-                  applicationId 'com.questmate.v45fixed'
+                  applicationId 'com.questmate.v46final'
                   minSdk 26
                   targetSdk 35
-                  versionCode 45
-                  versionName '45.0-reward-text-colours-route'
+                  versionCode 46
+                  versionName '46.0-final-reward-scan-route'
               }
           }
           EOF
 
           cat > questmate-complete/app/src/main/res/values/strings.xml <<'EOF'
           <resources>
-              <string name="app_name">QuestMate v45 ROUTE + COLOURS</string>
+              <string name="app_name">QuestMate v46 FIXED</string>
           </resources>
           EOF
 
@@ -115,7 +115,7 @@ jobs:
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <application
                   android:allowBackup="true"
-                  android:label="QuestMate v45 ROUTE + COLOURS"
+                  android:label="QuestMate v46 FIXED"
                   android:theme="@style/AppTheme"
                   android:usesCleartextTraffic="false">
                   <activity
@@ -2779,7 +2779,7 @@ jobs:
               f'Embedded seed fallbacks: {counts["seed"]}\n'
               f'Guides flagged for manual review: {counts["weak"]}\n'
               f'Entries missing parsed rewards: {counts["missing_rewards"]}\n'
-              'v45 audits every generated quest for placeholders and sub-guide shortcuts before repair, then runs a global full-guide repair pass for terse concrete steps; the final shipping gate rejects any placeholder, sub-guide shortcut, terse fragment, or incomplete guide that remains.\n'
+              'v46 audits every generated quest for placeholders and sub-guide shortcuts before repair, then runs a global full-guide repair pass for terse concrete steps; the final shipping gate rejects any placeholder, sub-guide shortcut, terse fragment, or incomplete guide that remains.\n'
               'Defence XP quests are marked blue; Prayer XP quests are marked yellow. See guide-audit.csv for filtered entries.\n'
               'No external wiki links are stored in quests.json.\n', encoding='utf-8')
           print(REPORT.read_text())
@@ -2920,7 +2920,7 @@ jobs:
           mkdir -p questmate-complete/app/src/main/java/com/questmate/app
           test -d questmate-complete/app/src/main/java/com/questmate/app
           cat > questmate-complete/app/src/main/java/com/questmate/app/MainActivity.java <<'EOF'
-          package com.questmate.v45fixed;
+          package com.questmate.v46final;
 
           import android.app.Activity;
           import android.os.Bundle;
@@ -2973,6 +2973,7 @@ jobs:
                   String name, start, sourceNote;
                   boolean defenceReward = false;
                   boolean prayerReward = false;
+                  String titleColour = "default";
                   List<String> items = new ArrayList<>();
                   List<String> places = new ArrayList<>();
                   List<String> rewards = new ArrayList<>();
@@ -3009,11 +3010,17 @@ jobs:
                   return r.contains("prayer") && (r.contains(" xp") || r.contains("experience"));
               }
               private int actualRewardColour(Quest q) {
+                  // v46: primary source is the build-time scan of the actual Rewards section.
+                  if(q!=null && "yellow".equalsIgnoreCase(q.titleColour)) return PRAYER_YELLOW;
+                  if(q!=null && "blue".equalsIgnoreCase(q.titleColour)) return DEFENCE_BLUE;
+                  // Runtime re-scan is a second safety net.
                   if(actualPrayerXpReward(q)) return PRAYER_YELLOW;
                   if(actualDefenceXpReward(q)) return DEFENCE_BLUE;
                   return TEXT;
               }
               private String actualRewardTag(Quest q) {
+                  if(q!=null && "yellow".equalsIgnoreCase(q.titleColour)) return "   • PRAYER XP";
+                  if(q!=null && "blue".equalsIgnoreCase(q.titleColour)) return "   • DEFENCE XP";
                   if(actualPrayerXpReward(q)) return "   • PRAYER XP";
                   if(actualDefenceXpReward(q)) return "   • DEFENCE XP";
                   return "";
@@ -3086,17 +3093,18 @@ jobs:
 
               private void showList() {
                   LinearLayout p=page(); root=p;
-                  TextView title=tv("QuestMate v45 ROUTE + COLOURS",30,TEXT,true); p.addView(title);
-                  TextView buildId=tv("v45 FIXED BUILD • colours come directly from Quest Rewards",14,ACCENT,true); p.addView(buildId);
-                  TextView sub=tv(quests.size()+" verified quests • BLUE = Defence XP • YELLOW = Prayer XP",15,MUTED,false); p.addView(sub);
 
-                  // Permanent route control ABOVE the search field so it is visible immediately.
-                  TextView cape=tv("★  OPEN COMPLETE QUEST CAPE WALKTHROUGH  →",22,PRAYER_YELLOW,true);
-                  cape.setBackgroundColor(PANEL); cape.setPadding(dp(16),dp(18),dp(16),dp(18)); margin(cape,0,12,0,5);
+                  // v46: FIRST control on screen. It cannot be hidden below the search box.
+                  TextView cape=tv("★  QUEST CAPE: MOST EFFICIENT FULL WALKTHROUGH  →",22,PRAYER_YELLOW,true);
+                  cape.setBackgroundColor(PANEL); cape.setPadding(dp(16),dp(20),dp(16),dp(20)); margin(cape,0,4,0,5);
                   cape.setOnClickListener(v->showCapeRoute()); p.addView(cape);
-                  TextView capeSub=tv("Tutorial Island → training targets → efficient quest order → Quest Cape",15,ACCENT,true);
-                  capeSub.setPadding(dp(8),dp(5),dp(8),dp(10));
+                  TextView capeSub=tv("Tap here: Tutorial Island finished → quest order → training targets → Quest Cape",15,ACCENT,true);
+                  capeSub.setPadding(dp(8),dp(5),dp(8),dp(14));
                   capeSub.setOnClickListener(v->showCapeRoute()); p.addView(capeSub);
+
+                  TextView title=tv("QuestMate v46 FIXED",30,TEXT,true); p.addView(title);
+                  TextView buildId=tv("v46 FINAL BUILD • reward sections pre-scanned for BLUE/YELLOW titles",14,ACCENT,true); p.addView(buildId);
+                  TextView sub=tv(quests.size()+" verified quests • BLUE = Defence XP • YELLOW = Prayer XP",15,MUTED,false); p.addView(sub);
 
                   EditText search=new EditText(this); search.setHint("Search quests..."); search.setHintTextColor(MUTED); search.setTextColor(TEXT);
                   search.setSingleLine(true); search.setBackgroundColor(PANEL); search.setPadding(dp(14),dp(12),dp(14),dp(12)); margin(search,0,10,0,10); p.addView(search);
@@ -3268,6 +3276,7 @@ jobs:
                           q.name=o.optString("name","Quest"); q.start=o.optString("start",""); q.sourceNote=o.optString("sourceNote","");
                           q.defenceReward=o.optBoolean("defenceReward",false);
                           q.prayerReward=o.optBoolean("prayerReward",false);
+                          q.titleColour=o.optString("titleColour","default");
                           JSONArray items=o.optJSONArray("items"); if(items!=null) for(int j=0;j<items.length();j++) q.items.add(items.optString(j));
                           JSONArray places=o.optJSONArray("places"); if(places!=null) for(int j=0;j<places.length();j++) q.places.add(places.optString(j));
                           JSONArray rewards=o.optJSONArray("rewards"); if(rewards!=null) for(int j=0;j<rewards.length();j++) q.rewards.add(rewards.optString(j));
@@ -3479,10 +3488,34 @@ jobs:
             "Zogre Flesh Eaters","Tai Bwo Wannai Trio","King's Ransom"
           }
           for q in data:
-            blob=' '.join(map(str,q.get('rewards',[]))).lower()
-            q['defenceReward']=bool(re.search(r'(?i)(?:defen[cs]e.{0,35}(?:experience|\bxp\b)|(?:experience|\bxp\b).{0,35}defen[cs]e|\d[\d,.]*\s*defen[cs]e)',blob)) or q.get('name') in defence_fallback
-            q['prayerReward']=bool(re.search(r'(?i)(?:prayer.{0,35}(?:experience|\bxp\b)|(?:experience|\bxp\b).{0,35}prayer|\d[\d,.]*\s*prayer)',blob)) or q.get('name') in prayer_fallback
-            q['rewardHighlightMetadata']={'defenceXpReward':q['defenceReward'],'prayerXpReward':q['prayerReward'],'detectedFrom':'v31 merged reward metadata + fallback'}
+            # v46 FINAL reward scan: scan the exact reward strings stored in the quest.
+            rewards=[str(x).strip() for x in (q.get('rewards',[]) or []) if str(x).strip()]
+            blob=' | '.join(rewards).lower()
+
+            defence_from_rewards=bool(re.search(
+              r'(?:defen[cs]e.{0,60}(?:experience|\bxp\b)|(?:experience|\bxp\b).{0,60}defen[cs]e|\d[\d,.]*\s*(?:defen[cs]e)(?:\s*(?:experience|xp))?)',
+              blob,re.I))
+            prayer_from_rewards=bool(re.search(
+              r'(?:prayer.{0,60}(?:experience|\bxp\b)|(?:experience|\bxp\b).{0,60}prayer|\d[\d,.]*\s*prayer(?:\s*(?:experience|xp))?)',
+              blob,re.I))
+
+            q['defenceReward']=defence_from_rewards or q.get('name') in defence_fallback
+            q['prayerReward']=prayer_from_rewards or q.get('name') in prayer_fallback
+
+            # Prayer takes yellow priority when both are present.
+            if q['prayerReward']:
+              q['titleColour']='yellow'
+            elif q['defenceReward']:
+              q['titleColour']='blue'
+            else:
+              q['titleColour']='default'
+
+            q['rewardHighlightMetadata']={
+              'defenceXpReward':q['defenceReward'],
+              'prayerXpReward':q['prayerReward'],
+              'titleColour':q['titleColour'],
+              'detectedFrom':'v46 direct scan of final Quest Rewards section'
+            }
 
           DB.write_text(json.dumps(data,ensure_ascii=False,separators=(',',':')),encoding='utf-8')
           Path('questmate-complete/v30-guide-repair.txt').write_text('\n'.join(f'{a} | {b} | steps={c} | score={d}' for a,b,c,d in repaired) or 'All existing guides were already at least as detailed as the v27 repair candidates.',encoding='utf-8')
@@ -3524,8 +3557,17 @@ jobs:
           assert all('rewards' in q for q in d), 'Every quest entry must contain a rewards field'
           assert all('defenceReward' in q for q in d), 'Every quest entry must contain defenceReward metadata'
           assert all('prayerReward' in q for q in d), 'Every quest entry must contain prayerReward metadata'
+          assert all(q.get('titleColour') in ('blue','yellow','default') for q in d), 'Every quest must have a valid titleColour'
           assert any(q.get('defenceReward') for q in d), 'No Defence reward quests were flagged'
           assert any(q.get('prayerReward') for q in d), 'No Prayer reward quests were flagged'
+
+          # Regression test for the exact bug shown by the user.
+          soul=next((q for q in d if q.get('name')=="A Soul's Bane"),None)
+          assert soul, "A Soul's Bane missing"
+          soul_rewards=' '.join(map(str,soul.get('rewards',[]))).lower()
+          assert 'defence' in soul_rewards, "A Soul's Bane final rewards do not contain Defence"
+          assert soul.get('titleColour')=='blue', f"A Soul's Bane must be BLUE, got {soul.get('titleColour')}"
+          print("A Soul's Bane colour regression test: BLUE PASS")
           assert all('rewardSource' in q and 'rewardsVerified' in q and 'rewardCount' in q for q in d), 'Reward metadata fields missing'
           assert all(len(q.get('steps',[]))>=3 for q in d), 'Every retained quest must have a full walkthrough'
           assert all(sum(len(re.findall(r"[A-Za-z0-9']+",s.get('text',''))) for s in q.get('steps',[]))>=45 for q in d), 'Every quest must contain substantial walkthrough text, not a tiny stub'
@@ -3583,8 +3625,8 @@ jobs:
       - name: Verify APK exists
         run: |
           test -f questmate-complete/app/build/outputs/apk/debug/app-debug.apk
-          cp questmate-complete/app/build/outputs/apk/debug/app-debug.apk questmate-complete/app/build/outputs/apk/debug/QuestMate-v45-ROUTE-COLOURS.apk
-          ls -lh questmate-complete/app/build/outputs/apk/debug/QuestMate-v45-ROUTE-COLOURS.apk
+          cp questmate-complete/app/build/outputs/apk/debug/app-debug.apk questmate-complete/app/build/outputs/apk/debug/QuestMate-v46-INSTALL-THIS-ROUTE-COLOURS.apk
+          ls -lh questmate-complete/app/build/outputs/apk/debug/QuestMate-v46-INSTALL-THIS-ROUTE-COLOURS.apk
 
       - name: Verify walkthrough button and reward-colour UI
         shell: bash
@@ -3596,11 +3638,11 @@ jobs:
           test -n "$SRC"
           test -f "$SRC"
           echo "Validating Android source: $SRC"
-          grep -F 'OPEN COMPLETE QUEST CAPE WALKTHROUGH' "$SRC"
+          grep -F 'QUEST CAPE: MOST EFFICIENT FULL WALKTHROUGH' "$SRC"
           grep -F 'actualDefenceXpReward' "$SRC"
           grep -F 'actualPrayerXpReward' "$SRC"
           grep -F 'actualRewardColour' "$SRC"
-          grep -F 'QuestMate v45 ROUTE + COLOURS' "$SRC"
+          grep -F 'QuestMate v46 FIXED' "$SRC"
           grep -F 'Reward colours:' "$SRC"
           grep -F "A Soul's Bane" "$SRC"
           grep -F 'explicitDefenceRewardQuest' "$SRC"
@@ -3609,16 +3651,16 @@ jobs:
           grep -F 'DEFENCE_BLUE' "$SRC"
           echo 'Walkthrough button and reward title colour logic verified.'
 
-      - name: Upload QuestMate v45 ROUTE + COLOURS APK
+      - name: Upload QuestMate v46 FIXED APK
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v45-Reward-Text-Colours-Quest-Cape
-          path: questmate-complete/app/build/outputs/apk/debug/QuestMate-v45-ROUTE-COLOURS.apk
+          name: QuestMate-v46-Final-Reward-Scan-Quest-Cape
+          path: questmate-complete/app/build/outputs/apk/debug/QuestMate-v46-INSTALL-THIS-ROUTE-COLOURS.apk
 
       - name: Upload v44 guide audit
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v45-Guide-Audit
+          name: QuestMate-v46-Guide-Audit
           path: |
             questmate-complete/guide-audit.csv
             questmate-complete/guide-build-report.txt
