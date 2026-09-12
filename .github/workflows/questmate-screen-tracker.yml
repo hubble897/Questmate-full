@@ -1,4 +1,4 @@
-name: Build QuestMate Complete - Reward Leakage and Terse Step Fix v30
+name: Build QuestMate Separate Install v32
 
 on:
   workflow_dispatch:
@@ -37,7 +37,7 @@ jobs:
           set -euo pipefail
 
           rm -rf questmate-complete
-          mkdir -p questmate-complete/app/src/main/java/com/questmate/complete
+          mkdir -p questmate-complete/app/src/main/java/com/questmate/separate/v32
           mkdir -p questmate-complete/app/src/main/assets
           mkdir -p questmate-complete/app/src/main/res/values
 
@@ -78,11 +78,11 @@ jobs:
           }
 
           android {
-              namespace 'com.questmate.complete'
+              namespace 'com.questmate.separate.v32'
               compileSdk 35
 
               defaultConfig {
-                  applicationId 'com.questmate.complete'
+                  applicationId 'com.questmate.separate.v32'
                   minSdk 26
                   targetSdk 35
                   versionCode 25
@@ -93,7 +93,7 @@ jobs:
 
           cat > questmate-complete/app/src/main/res/values/strings.xml <<'EOF'
           <resources>
-              <string name="app_name">QuestMate Complete</string>
+              <string name="app_name">QuestMate Separate</string>
           </resources>
           EOF
 
@@ -113,7 +113,7 @@ jobs:
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <application
                   android:allowBackup="true"
-                  android:label="QuestMate Complete"
+                  android:label="QuestMate Separate"
                   android:theme="@style/AppTheme"
                   android:usesCleartextTraffic="false">
                   <activity
@@ -2678,8 +2678,8 @@ jobs:
           fi
           rm questmate-complete/app/src/main/assets/quests_seed.json
 
-          cat > questmate-complete/app/src/main/java/com/questmate/complete/MainActivity.java <<'EOF'
-          package com.questmate.complete;
+          cat > questmate-complete/app/src/main/java/com/questmate/separate/v32/MainActivity.java <<'EOF'
+          package com.questmate.separate.v32;
 
           import android.app.Activity;
           import android.os.Bundle;
@@ -2762,7 +2762,7 @@ jobs:
 
               private void showList() {
                   LinearLayout p=page(); root=p;
-                  TextView title=tv("QuestMate Complete",30,TEXT,true); p.addView(title);
+                  TextView title=tv("QuestMate Separate",30,TEXT,true); p.addView(title);
                   TextView sub=tv(quests.size()+" verified quests • blue = Defence XP • yellow = Prayer XP",15,MUTED,false); p.addView(sub);
                   EditText search=new EditText(this); search.setHint("Search quests..."); search.setHintTextColor(MUTED); search.setTextColor(TEXT);
                   search.setSingleLine(true); search.setBackgroundColor(PANEL); search.setPadding(dp(14),dp(12),dp(14),dp(12)); margin(search,0,14,0,10); p.addView(search);
@@ -2800,15 +2800,16 @@ jobs:
                   if (!q.places.isEmpty()) { p.addView(heading("Places")); addBullets(p,q.places); }
                   if (q.start!=null && !q.start.trim().isEmpty()) { p.addView(heading("Starting Information")); p.addView(tv(q.start,18,TEXT,false)); }
 
-                  p.addView(heading("Step-by-Step Walkthrough"));
+                  int walkthroughColor = q.prayerReward ? PRAYER_YELLOW : (q.defenceReward ? DEFENCE_BLUE : ACCENT);
+                  TextView walkthroughHeading=tv("Step-by-Step Walkthrough",25,walkthroughColor,true); margin(walkthroughHeading,0,18,0,8); p.addView(walkthroughHeading);
                   String current=""; int n=1;
                   for (Step s:q.steps) {
                       if (s.section!=null && !s.section.isEmpty() && !s.section.equals(current)) {
-                          current=s.section; TextView sec=tv(current,20,ACCENT,true); margin(sec,0,12,0,2); p.addView(sec);
+                          current=s.section; TextView sec=tv(current,20,walkthroughColor,true); margin(sec,0,12,0,2); p.addView(sec);
                       }
                       TextView step=tv((n++)+". "+s.text,18,TEXT,false); margin(step,0,3,0,8); p.addView(step);
                   }
-                  if (q.steps.isEmpty()) p.addView(tv("DATA INTEGRITY ERROR: this quest was not allowed to ship without a walkthrough. Please use the v30 artifact.",17,PRAYER_YELLOW,true));
+                  if (q.steps.isEmpty()) p.addView(tv("DATA INTEGRITY ERROR: this quest was not allowed to ship without a walkthrough. Please use the v31 artifact.",17,PRAYER_YELLOW,true));
 
                   if (!q.rewards.isEmpty()) { p.addView(heading("Quest Rewards")); addBullets(p,q.rewards); TextView rm=tv("Reward metadata: " + (q.rewardSource.isEmpty()?"verified build sources":q.rewardSource) + " • " + q.rewardCount + " reward entries",13,MUTED,false); p.addView(rm); }
 
@@ -3040,7 +3041,7 @@ jobs:
             blob=' '.join(map(str,q.get('rewards',[]))).lower()
             q['defenceReward']=bool(re.search(r'(?i)(?:defen[cs]e.{0,35}(?:experience|\bxp\b)|(?:experience|\bxp\b).{0,35}defen[cs]e|\d[\d,.]*\s*defen[cs]e)',blob)) or q.get('name') in defence_fallback
             q['prayerReward']=bool(re.search(r'(?i)(?:prayer.{0,35}(?:experience|\bxp\b)|(?:experience|\bxp\b).{0,35}prayer|\d[\d,.]*\s*prayer)',blob)) or q.get('name') in prayer_fallback
-            q['rewardHighlightMetadata']={'defenceXpReward':q['defenceReward'],'prayerXpReward':q['prayerReward'],'detectedFrom':'v30 merged reward metadata + fallback'}
+            q['rewardHighlightMetadata']={'defenceXpReward':q['defenceReward'],'prayerXpReward':q['prayerReward'],'detectedFrom':'v31 merged reward metadata + fallback'}
 
           DB.write_text(json.dumps(data,ensure_ascii=False,separators=(',',':')),encoding='utf-8')
           Path('questmate-complete/v30-guide-repair.txt').write_text('\n'.join(f'{a} | {b} | steps={c} | score={d}' for a,b,c,d in repaired) or 'All existing guides were already at least as detailed as the v27 repair candidates.',encoding='utf-8')
@@ -3129,16 +3130,16 @@ jobs:
           test -f questmate-complete/app/build/outputs/apk/debug/app-debug.apk
           ls -lh questmate-complete/app/build/outputs/apk/debug/app-debug.apk
 
-      - name: Upload QuestMate Complete APK
+      - name: Upload QuestMate Separate APK
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v30-Reward-Leakage-and-Terse-Step-Fix
+          name: QuestMate-v32-Separate-Install
           path: questmate-complete/app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload v27 guide audit
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v30-Guide-Audit
+          name: QuestMate-v32-Guide-Audit
           path: |
             questmate-complete/guide-audit.csv
             questmate-complete/guide-build-report.txt
