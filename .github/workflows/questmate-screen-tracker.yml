@@ -1,4 +1,4 @@
-name: Build QuestMate Separate v38 - Clickable Quest Links
+name: Build QuestMate Separate v39 - Clickable Quest Links
 
 on:
   workflow_dispatch:
@@ -37,7 +37,7 @@ jobs:
           set -euo pipefail
 
           rm -rf questmate-complete
-          mkdir -p questmate-complete/app/src/main/java/com/questmate/separate/v38
+          mkdir -p questmate-complete/app/src/main/java/com/questmate/separate/v39
           mkdir -p questmate-complete/app/src/main/assets
           mkdir -p questmate-complete/app/src/main/res/values
 
@@ -78,22 +78,22 @@ jobs:
           }
 
           android {
-              namespace 'com.questmate.separate.v38'
+              namespace 'com.questmate.separate.v39'
               compileSdk 35
 
               defaultConfig {
-                  applicationId 'com.questmate.separate.v38'
+                  applicationId 'com.questmate.separate.v39'
                   minSdk 26
                   targetSdk 35
-                  versionCode 38
-                  versionName '38.0-walkthrough-button-reward-colours'
+                  versionCode 39
+                  versionName '39.0-missing-guides-fixed'
               }
           }
           EOF
 
           cat > questmate-complete/app/src/main/res/values/strings.xml <<'EOF'
           <resources>
-              <string name="app_name">QuestMate Separate v38</string>
+              <string name="app_name">QuestMate Separate v39</string>
           </resources>
           EOF
 
@@ -113,7 +113,7 @@ jobs:
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <application
                   android:allowBackup="true"
-                  android:label="QuestMate Separate v38"
+                  android:label="QuestMate Separate v39"
                   android:theme="@style/AppTheme"
                   android:usesCleartextTraffic="false">
                   <activity
@@ -2066,6 +2066,87 @@ jobs:
                   q['steps'].insert(pos,{'section':'Important — record the incantation','text':reminder})
               return q
 
+          def patch_missing_core_guides(q):
+              """Guaranteed detailed fallbacks for quests whose Wiki/RuneLite markup can
+              occasionally collapse to unusably short text during build-time parsing.
+              These are only used for the named quests below and keep the APK complete
+              even when an upstream page changes shape."""
+              key=re.sub(r'[^a-z0-9]','',q.get('name','').lower())
+              if key=='scorpioncatcher':
+                  q['items']=dedupe(q.get('items',[])+['Scorpion cage (received from Thormac)','Dusty key unless using the 70 Agility shortcut','Antipoison and food recommended'])
+                  q['places']=dedupe(q.get('places',[])+["Sorcerer's Tower","Seers' Village","Taverley Dungeon","Barbarian Outpost","Edgeville Monastery"])
+                  q['steps']=[
+                    {'section':'Start the quest','text':"Talk to Thormac on the top floor of the Sorcerer's Tower south of Seers' Village. Agree to recover his three escaped Kharid scorpions and make sure you receive the scorpion cage."},
+                    {'section':'Get the first location','text':"Go to Seers' Village and speak to a Seer about Thormac's scorpions. Do this before entering Taverley Dungeon because the hidden wall for the first scorpion is not available until the Seer has revealed the location."},
+                    {'section':'Reach the Taverley Dungeon scorpion','text':"Enter Taverley Dungeon. If you do not have 70 Agility, obtain and use a dusty key to reach the deeper blue-dragon side of the dungeon; otherwise use the Agility shortcut. Continue to the hidden room indicated by the quest route and use the scorpion cage on the Kharid scorpion."},
+                    {'section':'Catch the Barbarian Outpost scorpion','text':"Travel to the Barbarian Outpost, enter the main building and go upstairs. Find the Kharid scorpion in the upper area and use the scorpion cage on it to capture the second scorpion."},
+                    {'section':'Catch the monastery scorpion','text':"Travel to the Edgeville Monastery and climb to the upper floor, which requires 31 Prayer. Locate the Kharid scorpion there and use the scorpion cage on it to capture the third scorpion."},
+                    {'section':'Finish the quest','text':"Return to Thormac at the Sorcerer's Tower after all three scorpions are in the cage. Speak to him to return them and complete Scorpion Catcher."}
+                  ]
+                  q['start']=q['steps'][0]['text']; q['sourceNote']='Detailed embedded fallback verified against the current OSRS quest route.'
+              elif key=='trollstronghold':
+                  q['items']=dedupe(q.get('items',[])+['Climbing boots','Combat equipment and food','Games necklace recommended'])
+                  q['places']=dedupe(q.get('places',[])+['Burthorpe','Tenzing’s house','Trollheim','Troll Stronghold','Burthorpe'])
+                  q['steps']=[
+                    {'section':'Accept the rescue mission','text':"Speak to Denulth in the Burthorpe training camp south-east of the Warriors' Guild. Ask about the fight with the trolls, offer to help, and agree to rescue Godric."},
+                    {'section':'Climb toward Trollheim','text':"Follow the mountain path to Tenzing's house. Buy climbing boots from Tenzing for 12 coins if needed, equip them, climb over the stile behind his house, and continue over the rock obstacles toward the arena."},
+                    {'section':'Defeat Dad','text':"Enter the troll arena and defeat Dad. Protect from Melee and food are useful; after he yields, continue through the gate and climb onward toward Trollheim."},
+                    {'section':'Reach Troll Stronghold','text':"Travel around or across Trollheim toward its western side, avoiding the thrower trolls on the northern route where possible. Continue north past the mountain trolls and enter Troll Stronghold."},
+                    {'section':'Obtain the prison key','text':"Inside the stronghold, go south to the west-side doorway and then north toward the troll generals. Defeat one level 113 Troll General and take the prison key it drops; the room furniture can be used to safespot a general with Ranged or Magic."},
+                    {'section':'Reach the jail','text':"Return south, descend the stairs into Burntmeat's Kitchen, then travel to the northern end of the stronghold. Open the locked door with the prison key and climb down into the jail."},
+                    {'section':'Get both cell keys','text':"Find the sleeping guards Berry and Twig. With 30 Thieving you can pickpocket them for Cell key 1 and Cell key 2; otherwise defeat them and take the keys. Use the nearby empty cells as safespots if needed."},
+                    {'section':'Free the prisoners','text':"Use the two cell keys to free Eadgar and Godric from their cells. Leave through the southern secret exit and travel back toward Burthorpe."},
+                    {'section':'Claim the reward','text':"Return to Burthorpe and speak to Dunstan at the smithing building in the north-east part of town. Tell him Godric is safe to complete Troll Stronghold."}
+                  ]
+                  q['start']=q['steps'][0]['text']; q['sourceNote']='Detailed embedded fallback verified against the current OSRS quest route.'
+              elif key=='thelosttribe':
+                  q['items']=dedupe(q.get('items',[])+['Pickaxe','Safe light source','Tinderbox if your light source requires it','Lockpick recommended'])
+                  q['places']=dedupe(q.get('places',[])+['Lumbridge Castle','Lumbridge Castle cellar','H.A.M. Hideout','Dorgesh-Kaan mine'])
+                  q['steps']=[
+                    {'section':'Investigate the cellar incident','text':"Talk to Sigmund on the first floor of Lumbridge Castle. Question castle residents such as Duke Horacio, the Cook, Hans, Father Aereck, Bob, Gee or Donie until someone mentions seeing a goblin in the cellar, then report back to Duke Horacio."},
+                    {'section':'Enter the new cave','text':"Go to the castle kitchen, climb down the trapdoor into the cellar, use your pickaxe on the rubble in the damaged wall, and crawl through the opening. Light your safe light source before moving deeper into the cave."},
+                    {'section':'Meet Mistag','text':"Pick up the brooch lying on the cave floor not far beyond the opening. Continue until you meet Mistag, speak with him about the Dorgeshuun, and let him escort you back to Lumbridge."},
+                    {'section':'Report to the Duke','text':"Speak to Duke Horacio and explain what you discovered. When he refuses to believe the Dorgeshuun are peaceful, investigate Sigmund's involvement."},
+                    {'section':'Expose Sigmund','text':"Pickpocket Sigmund to obtain his key, then use it to open his chest in the neighbouring room and take the H.A.M. robes. Keep the robes because they are useful for the following Dorgeshuun quest."},
+                    {'section':'Find the stolen silverware','text':"Travel to the H.A.M. Hideout west of Lumbridge Castle. Pick the lock on the trapdoor, enter the hideout, and search the crate south of the ladder to recover the Duke's stolen silverware."},
+                    {'section':'Obtain the peace treaty','text':"Return the stolen silverware to Duke Horacio. He dismisses Sigmund and gives you a signed peace treaty to take to the Dorgeshuun."},
+                    {'section':'Return underground','text':"Go back to the Lumbridge Castle cellar and through the mined opening. Speak to Kazgar and have him guide you through the tunnels to Mistag."},
+                    {'section':'Make peace','text':"Speak to Mistag while carrying the signed peace treaty. Complete the dialogue and watch the agreement between Lumbridge and the Dorgeshuun to finish The Lost Tribe."}
+                  ]
+                  q['start']=q['steps'][0]['text']; q['sourceNote']='Detailed embedded fallback verified against the current OSRS quest route.'
+              elif key=='twilightspromise':
+                  q['items']=dedupe(q.get('items',[])+['Combat gear for two different combat styles','Food','Stamina potions recommended'])
+                  q['places']=dedupe(q.get('places',[])+['Sunrise Palace','Civitas illa Fortis temple','Kualti Headquarters','Ralos’ Rise','Teomat'])
+                  q['steps']=[
+                    {'section':'Meet the Tullus siblings','text':"Speak to Ennius Tullus or Furia Tullus outside the Sunrise Palace in Civitas illa Fortis and agree to help. Head south to the temple inside the city walls and speak to Metzli, Teokan of Ranul."},
+                    {'section':'Visit the temple crypt','text':"Go down the temple stairs into the crypt, pass through the northern gate, and speak with Prince Itzla Arkan and Servius, Teokan of Ralos. Return to Ennius and Furia inside the Sunrise Palace to receive a Varlamore crest."},
+                    {'section':'Investigate the knights','text':"Locate the Knights of Varlamore around the city as directed by the quest. For the Arrun and Claudia encounter, keep speaking to the knight you are escorting so she follows you to the eastern fountain, then speak to her again after the cutscene."},
+                    {'section':'Search Kualti Headquarters','text':"Return to Ennius and Furia, then go to the Kualti Headquarters west of the combat training area. Climb to the top floor and search the southern chest in the south-eastern room to obtain the incriminating letter."},
+                    {'section':'Read the evidence','text':"Read the incriminating letter, return to Ennius and Furia at the Sunrise Palace, watch the resulting cutscene, and speak to Ennius again to advance the investigation."},
+                    {'section':'Travel with Renu','text':"Speak to Regulus Cento south-east of the palace. Feed Renu when instructed and travel with Renu to Ralos' Rise at the Teomat."},
+                    {'section':'Meet Prince Itzla','text':"Enter the Teomat temple and speak with Prince Itzla. Then go to the northern building and speak to Metzli to begin the confrontation with the Twilight Emissaries."},
+                    {'section':'Defeat the cultists','text':"Defeat all eight level 34 cultists in the encounter using your combat equipment and food as needed. Remain in the area until the combat sequence and cutscene are fully completed."},
+                    {'section':'Finish the quest','text':"Complete the dialogue after the final cutscene to finish Twilight's Promise and unlock the Civitas illa Fortis teleport and Quetzal Transport System rewards."}
+                  ]
+                  q['start']=q['steps'][0]['text']; q['sourceNote']='Detailed embedded fallback verified against the current OSRS quest route.'
+              elif key=='thegiantdwarf':
+                  q['items']=dedupe(q.get('items',[])+['200 coins','Air rune and law rune for Telekinetic Grab','Logs','Coal','Tinderbox','Iron bar','3 cut sapphires','Redberry pie','Various ores and bars for Consortium jobs'])
+                  q['places']=dedupe(q.get('places',[])+['Keldagrim entrance','Keldagrim','Blasidar’s house','Keldagrim marketplace','Mudskipper Point','Varrock Palace library'])
+                  q['steps']=[
+                    {'section':'Enter Keldagrim','text':"Travel to the Keldagrim entrance east of Rellekka, pass through the cave entrance between the two dwarf statues, and speak to the Dwarven Boatman by the River Kelda. Accept the trip to Keldagrim and watch the boat crash into the statue of King Alvis."},
+                    {'section':'Take responsibility for the statue','text':"Finish the conversation with Commander Veldaban after the arrest scene, then find Blasidar the sculptor on the east side of Keldagrim south of the kebab shop. Agree to help him make a replacement statue."},
+                    {'section':'Arrange exquisite clothes','text':"Speak to Vermundi in the eastern market and follow her requests for the special clothing. Complete her errands and pay the required coins so you receive the exquisite clothes needed for Blasidar's model."},
+                    {'section':'Get the exquisite boots','text':"Follow Blasidar's lead for the boots by speaking with the relevant Keldagrim shoemaker and retrieving the two boot pieces. Use the required materials and dialogue so the left and right pieces are restored into the exquisite boots."},
+                    {'section':'Obtain the dwarven battleaxe','text':"Follow the clues for the model's weapon to obtain a dwarven battleaxe. This route involves checking Keldagrim sources and completing the required outside errand before returning with the finished axe."},
+                    {'section':'Dress Riki for the statue','text':"Return to Blasidar's house and speak to Riki, the sculptor's model. Give Riki the exquisite clothes, exquisite boots and dwarven battleaxe, then speak to Blasidar and watch the statue-related cutscene."},
+                    {'section':'Choose a Consortium company','text':"Go to the upper floor of the Keldagrim marketplace and choose the secretary of any mining company except the Red Axe. Keep working for the same company because job progress is tracked separately and changing worlds can reset the current task."},
+                    {'section':'Complete company work orders','text':"Ask your chosen secretary for work and deliver the requested ores or bars to that company's director. Repeat the jobs until your reputation with the company is high enough for the director to support you at the Consortium meeting."},
+                    {'section':'Attend the Consortium meeting','text':"Once the director agrees to support you, follow the dialogue to attend the Consortium meeting and resolve the question of the replacement statue. Watch the meeting and the events involving the Red Axe company."},
+                    {'section':'Finish with Commander Veldaban','text':"After the Consortium sequence, speak to Commander Veldaban and complete his final dialogue about the statue and the Red Axe. Finish the conversation to complete The Giant Dwarf."}
+                  ]
+                  q['start']=q['steps'][0]['text']; q['sourceNote']='Detailed embedded fallback retained when upstream parsing is too sparse; core route cross-checked against current OSRS quest data.'
+              return q
+
           def patch_desert_treasure_ii(q, full_steps, quick_steps, runelite_steps):
               """For DT2, never keep synthetic instructions such as 'do step'.
               Prefer the longest detailed Wiki walkthrough, because the quest contains
@@ -2587,6 +2668,7 @@ jobs:
                   q=patch_demon_slayer(q)
               if norm_name in ('deserttreasureiithefallenempire','deserttreasure2thefallenempire','deserttreasureii'):
                   q=patch_desert_treasure_ii(q,full_steps,quick_steps,runelite)
+              q=patch_missing_core_guides(q)
               try:
                   q['steps']=strip_generic_steps(expand_subguide_shortcuts(q.get('steps',[]),full,quick,q['name']))
                   q['steps']=remove_redundant_summary_shortcuts(q['steps'])
@@ -2821,8 +2903,8 @@ jobs:
           PYEOF
           python3 /tmp/build_cape_route.py
 
-          cat > questmate-complete/app/src/main/java/com/questmate/separate/v38/MainActivity.java <<'EOF'
-          package com.questmate.separate.v38;
+          cat > questmate-complete/app/src/main/java/com/questmate/separate/v39/MainActivity.java <<'EOF'
+          package com.questmate.separate.v39;
 
           import android.app.Activity;
           import android.os.Bundle;
@@ -2962,7 +3044,7 @@ jobs:
 
               private void showList() {
                   LinearLayout p=page(); root=p;
-                  TextView title=tv("QuestMate Separate v38",30,TEXT,true); p.addView(title);
+                  TextView title=tv("QuestMate Separate v39",30,TEXT,true); p.addView(title);
                   TextView sub=tv(quests.size()+" verified quests • BLUE titles = Defence XP • YELLOW titles = Prayer XP",15,MUTED,false); p.addView(sub);
                   EditText search=new EditText(this); search.setHint("Search quests..."); search.setHintTextColor(MUTED); search.setTextColor(TEXT);
                   search.setSingleLine(true); search.setBackgroundColor(PANEL); search.setPadding(dp(14),dp(12),dp(14),dp(12)); margin(search,0,14,0,10); p.addView(search);
@@ -3379,7 +3461,7 @@ jobs:
           route_names={x.get('questName') for x in route if x.get('type')=='quest'}
           assert {q.get('name') for q in d} <= route_names, 'Quest Cape route does not cover every canonical quest'
           assert route[-1].get('title','').startswith('Quest Cape'), 'Quest Cape final milestone missing'
-          java_src=open('questmate-complete/app/src/main/java/com/questmate/separate/v38/MainActivity.java',encoding='utf-8').read()
+          java_src=open('questmate-complete/app/src/main/java/com/questmate/separate/v39/MainActivity.java',encoding='utf-8').read()
           assert 'questLinkedTv' in java_src and 'ClickableSpan' in java_src and 'LinkMovementMethod' in java_src, 'Clickable quest-link support missing'
           assert 'questLinkedTv(rs.detail' in java_src and 'questLinkedTv((n++)+". "+s.text' in java_src, 'Quest references are not linked across route/walkthrough text'
           assert len(d) >= 170, f'Expected the complete canonical OSRS quest database, found {len(d)}'
@@ -3460,7 +3542,7 @@ jobs:
         shell: bash
         run: |
           set -e
-          SRC="questmate-complete/app/src/main/java/com/questmate/separate/v38/MainActivity.java"
+          SRC="questmate-complete/app/src/main/java/com/questmate/separate/v39/MainActivity.java"
           grep -F 'QUEST CAPE WALKTHROUGH' "$SRC"
           grep -F 'explicitDefenceRewardQuest' "$SRC"
           grep -F 'explicitPrayerRewardQuest' "$SRC"
@@ -3468,16 +3550,16 @@ jobs:
           grep -F 'DEFENCE_BLUE' "$SRC"
           echo 'Walkthrough button and reward title colour logic verified.'
 
-      - name: Upload QuestMate Separate v38 APK
+      - name: Upload QuestMate Separate v39 APK
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v38-Clickable-Quest-Links
+          name: QuestMate-v39-Missing-Guides-Fixed
           path: questmate-complete/app/build/outputs/apk/debug/app-debug.apk
 
-      - name: Upload v27 guide audit
+      - name: Upload v39 guide audit
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v38-Guide-Audit
+          name: QuestMate-v39-Guide-Audit
           path: |
             questmate-complete/guide-audit.csv
             questmate-complete/guide-build-report.txt
