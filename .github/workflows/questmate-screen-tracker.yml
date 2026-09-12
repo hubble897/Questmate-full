@@ -1,4 +1,4 @@
-name: Build QuestMate Complete - Canonical Index Network Fallback v21
+name: Build QuestMate Complete - Safe Subguide Expansion v22
 
 on:
   workflow_dispatch:
@@ -85,8 +85,8 @@ jobs:
                   applicationId 'com.questmate.complete'
                   minSdk 26
                   targetSdk 35
-                  versionCode 21
-                  versionName '21.0-canonical-index-network-fallback'
+                  versionCode 22
+                  versionName '22.0-safe-subguide-expansion'
               }
           }
           EOF
@@ -1632,6 +1632,17 @@ jobs:
                   return expand_subguide_shortcuts(out,full_markup,quick_markup,quest_title)
               return out
 
+          def safe_expand_candidate(steps, full_markup, quick_markup, quest_title, label):
+              """Reject one broken source candidate without aborting the entire quest build."""
+              try:
+                  expanded=expand_subguide_shortcuts(steps,full_markup,quick_markup,quest_title)
+                  expanded=strip_generic_steps(expanded)
+                  if any(SUBGUIDE.match(clean(x.get('text',''))) or VAGUE.match(clean(x.get('text',''))) for x in expanded):
+                      raise RuntimeError('placeholder/sub-guide text survived candidate expansion')
+                  return expanded, ''
+              except Exception as exc:
+                  return [], f'{label}: {exc}'
+
           def parse_rewards(markup):
               soup=safe_soup(markup)
               if soup is None: return []
@@ -2253,23 +2264,31 @@ jobs:
               runelite=strip_generic_steps(qh_steps(q['name']))
               seed=strip_generic_steps(good_seed_steps(q))
 
-              # v15 rule for EVERY quest: named sub-guide shortcuts are illegal.
-              # Expand them into their real steps before scoring/selecting a source.
-              quick_steps=strip_generic_steps(expand_subguide_shortcuts(quick_steps,full,quick,q['name']))
-              full_steps=strip_generic_steps(expand_subguide_shortcuts(full_steps,full,quick,q['name']))
-              runelite=strip_generic_steps(expand_subguide_shortcuts(runelite,full,quick,q['name']))
-              seed=strip_generic_steps(expand_subguide_shortcuts(seed,full,quick,q['name']))
+              # Expand each candidate independently. A broken sub-guide pointer in one
+              # source must not abort all 189 quests; that candidate is rejected instead.
+              candidate_errors=[]
+              quick_steps,err=safe_expand_candidate(quick_steps,full,quick,q['name'],'OSRS Wiki quick guide')
+              if err: candidate_errors.append(err)
+              full_steps,err=safe_expand_candidate(full_steps,full,quick,q['name'],'OSRS Wiki full guide')
+              if err: candidate_errors.append(err)
+              runelite,err=safe_expand_candidate(runelite,full,quick,q['name'],'RuneLite Quest Helper')
+              if err: candidate_errors.append(err)
+              seed,err=safe_expand_candidate(seed,full,quick,q['name'],'embedded Quest Helper seed')
+              if err: candidate_errors.append(err)
 
-              # v14 chooses the most detailed complete source, not merely the first source
-              # that passes a minimum quality threshold. This is important for long quests:
-              # a 70-step full walkthrough must beat a 10-step summary.
               choices=[
                   ('RuneLite Quest Helper', runelite),
                   ('OSRS Wiki quick guide', quick_steps),
                   ('OSRS Wiki full guide', full_steps),
                   ('embedded Quest Helper seed', seed),
               ]
-              source,best=max(choices,key=lambda pair:detail_score(pair[1]))
+              viable=[pair for pair in choices if pair[1] and detail_score(pair[1])>-100000]
+              if not viable:
+                  raise RuntimeError(
+                      f"{q['name']}: no complete all-in-one walkthrough candidate remained. "
+                      f"Candidate failures: {' | '.join(candidate_errors)}"
+                  )
+              source,best=max(viable,key=lambda pair:detail_score(pair[1]))
               q['steps']=strip_generic_steps(best)
               if source=='OSRS Wiki': counts['wiki']+=1
               elif source=='RuneLite Quest Helper': counts['runelite']+=1
@@ -2292,6 +2311,14 @@ jobs:
               q['rewardSource']=' + '.join(sources)
               q['rewardsVerified']=bool(wiki_rewards or runelite_rewards)
               q['rewardCount']=len(rewards)
+              q['rewardMetadata']={
+                  'authoritativeSource':'OSRS Wiki' if wiki_rewards else ('RuneLite Quest Helper' if runelite_rewards else 'embedded metadata'),
+                  'sourceList':sources,
+                  'wikiRewardCount':len(wiki_rewards),
+                  'runeliteRewardCount':len(runelite_rewards),
+                  'embeddedRewardCount':len(seed_rewards),
+                  'mergedRewardCount':len(rewards),
+              }
 
               if q['steps']:
                   existing=clean(q.get('start',''))
@@ -2309,9 +2336,13 @@ jobs:
                   q=patch_demon_slayer(q)
               if norm_name in ('deserttreasureiithefallenempire','deserttreasure2thefallenempire','deserttreasureii'):
                   q=patch_desert_treasure_ii(q,full_steps,quick_steps,runelite)
-              q['steps']=strip_generic_steps(expand_subguide_shortcuts(q.get('steps',[]),full,quick,q['name']))
+              try:
+                  q['steps']=strip_generic_steps(expand_subguide_shortcuts(q.get('steps',[]),full,quick,q['name']))
+              except Exception as exc:
+                  raise RuntimeError(f"{q['name']}: final all-in-one expansion failed after choosing {source}: {exc}")
               if any(SUBGUIDE.match(clean(x.get('text',''))) or VAGUE.match(clean(x.get('text',''))) for x in q['steps']):
-                  raise RuntimeError(f"{q['name']}: vague/sub-guide instruction survived final expansion")
+                  bad=[clean(x.get('text','')) for x in q['steps'] if SUBGUIDE.match(clean(x.get('text',''))) or VAGUE.match(clean(x.get('text','')))]
+                  raise RuntimeError(f"{q['name']}: vague/sub-guide instruction survived final expansion: {bad[:5]}")
 
               # Never invent a reward placeholder. Missing reward metadata is an audit
               # failure so the APK cannot claim incomplete rewards as real data.
@@ -2611,7 +2642,7 @@ jobs:
       - name: Upload QuestMate Complete APK
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v21-Canonical-Index-Network-Fallback
+          name: QuestMate-v22-Safe-Subguide-Expansion
           path: questmate-complete/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
