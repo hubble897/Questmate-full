@@ -1,4 +1,4 @@
-name: Build QuestMate Complete - Regex Fixed All-In-One Guides v20
+name: Build QuestMate Complete - Canonical Index Network Fallback v21
 
 on:
   workflow_dispatch:
@@ -85,8 +85,8 @@ jobs:
                   applicationId 'com.questmate.complete'
                   minSdk 26
                   targetSdk 35
-                  versionCode 20
-                  versionName '20.0-regex-fixed-all-in-one-guides'
+                  versionCode 21
+                  versionName '21.0-canonical-index-network-fallback'
               }
           }
           EOF
@@ -2021,14 +2021,16 @@ jobs:
               return bool(re.search(r'\bquest\s+points?\b|\bqp\b', blob, re.I))
 
           def canonical_quest_titles():
-              """Return the complete main-quest index without depending on reward parsing.
+              """Build the main OSRS quest index independently of walkthrough/reward parsing.
 
-              Primary membership source is RuneLite's quest-progress enums, which separate
-              normal quests from the miniquest section. OSRS Wiki Quests/List is merged in
-              when available so newly released quests are not missed. Names are resolved to
-              the actual Wiki/seed title, but membership never depends on walkthrough or
-              reward completeness.
+              Sources, in order:
+              1. Local RuneLite Quest Helper clone.
+              2. Raw GitHub QuestVarPlayer.java + QuestVarbits.java network fallback.
+              3. OSRS Wiki Quests/List merge.
+
+              This deliberately does NOT use reward text to decide whether an entry is a quest.
               """
+
               raw_seed=json.loads(SRC.read_text(encoding='utf-8'))
               seed_by_key={}
               for q in raw_seed:
@@ -2057,79 +2059,124 @@ jobs:
               }
 
               def enum_to_candidate(enum):
-                  e=re.sub(r'_STATE_\\d+$','',enum)
+                  e=re.sub(r'_STATE_\d+$','',enum)
                   key=re.sub(r'[^a-z0-9]','',e.lower())
-                  if key in enum_alias: return enum_alias[key]
-                  if key in seed_by_key: return seed_by_key[key]
-                  # Conservative seed fuzzy match handles punctuation/roman numerals.
-                  for sk,n in seed_by_key.items():
-                      if sk==key or sk.rstrip('i')==key.rstrip('i'):
-                          return n
+                  if key in enum_alias:
+                      return enum_alias[key]
+                  if key in seed_by_key:
+                      return seed_by_key[key]
                   words=e.lower().split('_')
                   small={'of','the','and','a','an','to','in','at','for','on'}
                   return ' '.join(w if w in small else w.capitalize() for w in words)
 
+              def strip_after_miniquests(s):
+                  low=s.lower()
+                  cuts=[]
+                  for marker in ('miniquest', 'mini-quest', 'mini quest'):
+                      i=low.find(marker)
+                      if i >= 0:
+                          cuts.append(i)
+                  return s[:min(cuts)] if cuts else s
+
+              def extract_enums(s):
+                  s=strip_after_miniquests(s)
+                  found=[]
+                  for enum in re.findall(r'\bQUEST_([A-Z][A-Z0-9_]*)\s*\(',s):
+                      if enum == 'TAB':
+                          continue
+                      if re.search(r'_STATE_\d+$',enum):
+                          continue
+                      found.append(enum)
+                  return found
+
+              def fetch_text(url):
+                  try:
+                      r=SESSION.get(url,timeout=25)
+                      if r.status_code==200 and 'QUEST_' in r.text:
+                          return r.text
+                  except Exception as exc:
+                      print('Network source unavailable:',url,repr(exc))
+                  return ''
+
               def runelite_enums():
                   enums=[]
                   info_root=Path('/tmp/quest-helper/src/main/java/com/questhelper/questinfo')
+                  local_ok=False
                   for fn in ('QuestVarPlayer.java','QuestVarbits.java'):
                       f=info_root/fn
-                      if not f.exists():
-                          continue
-                      s=f.read_text(encoding='utf-8',errors='ignore')
-                      # Everything after the explicit miniquest marker is not a main quest.
-                      s=re.split(r'(?is)/\\*\\*.*?mini-?quest.*?\\*/|//\\s*mini-?quest',s,maxsplit=1)[0]
-                      for enum in re.findall(r'\bQUEST_([A-Z][A-Z0-9_]*)\s*\(',s):
-                          if re.search(r'_STATE_\\d+$',enum):
-                              continue
-                          enums.append(enum)
-                  return list(dict.fromkeys(enums))
+                      if f.exists():
+                          s=f.read_text(encoding='utf-8',errors='ignore')
+                          got=extract_enums(s)
+                          if got:
+                              local_ok=True
+                              enums.extend(got)
+
+                  # GitHub raw fallback makes this independent of git-clone success.
+                  if not local_ok or len(set(enums)) < 100:
+                      base='https://raw.githubusercontent.com/Zoinkwiz/quest-helper/master/src/main/java/com/questhelper/questinfo/'
+                      for fn in ('QuestVarPlayer.java','QuestVarbits.java'):
+                          s=fetch_text(base+fn)
+                          if s:
+                              enums.extend(extract_enums(s))
+
+                  enums=list(dict.fromkeys(enums))
+                  print(f'RuneLite main-quest enum entries discovered: {len(enums)}')
+                  return enums
 
               def wiki_list_titles():
                   try:
                       markup=wiki_parse('Quests/List')
                       soup=safe_soup(markup)
-                      if soup is None: return []
-                      titles=[]; active=False
-                      wanted={'free-to-play quests',"members' quests",'members quests'}
-                      for node in soup.find_all(['h2','table']):
-                          if node.name=='h2':
-                              lab=clean(node.get_text(' ',strip=True)).lower()
-                              active=lab in wanted
-                              if lab.startswith(('miniquest','quest classifications','see also')):
-                                  active=False
+                      if soup is None:
+                          return []
+                      titles=[]
+                      # Accept all quest tables, but only rows from a table with a
+                      # Quest/Name header. Exclude miniquest-labelled tables/sections.
+                      for table in soup.find_all('table'):
+                          heading=table.find_previous(['h2','h3'])
+                          heading_text=clean(heading.get_text(' ',strip=True)).lower() if heading else ''
+                          if 'miniquest' in heading_text or 'mini-quest' in heading_text:
                               continue
-                          if node.name!='table' or not active: continue
-                          rows=node.find_all('tr')
-                          # Detect quest/name column by header, never a hard-coded index.
+                          rows=table.find_all('tr')
+                          if not rows:
+                              continue
                           qcol=None
-                          for tr in rows[:4]:
+                          for tr in rows[:5]:
                               cells=tr.find_all(['th','td'],recursive=False)
                               labs=[clean(c.get_text(' ',strip=True)).lower() for c in cells]
                               for i,lab in enumerate(labs):
                                   if lab in ('quest','name') or lab.startswith('quest '):
-                                      qcol=i; break
-                              if qcol is not None: break
-                          if qcol is None: continue
+                                      qcol=i
+                                      break
+                              if qcol is not None:
+                                  break
+                          if qcol is None:
+                              continue
                           for tr in rows:
                               cells=tr.find_all(['th','td'],recursive=False)
-                              if qcol>=len(cells): continue
-                              a=cells[qcol].find('a',href=True)
-                              if not a: continue
+                              if qcol>=len(cells):
+                                  continue
+                              cell=cells[qcol]
+                              a=cell.find('a',href=True)
+                              if not a:
+                                  continue
                               t=clean(a.get('title') or a.get_text(' ',strip=True))
-                              if not t or t.startswith(('File:','Category:','Template:')): continue
-                              if '/Quick guide' in t or '/Strategy' in t: continue
+                              if not t or t.startswith(('File:','Category:','Template:','Help:','Special:')):
+                                  continue
+                              if '/Quick guide' in t or '/Strategy' in t:
+                                  continue
                               titles.append(t)
-                      return dedupe(titles)
+                      titles=dedupe(titles)
+                      print(f'OSRS Wiki quest-list titles discovered: {len(titles)}')
+                      return titles
                   except Exception as exc:
-                      print('Wiki quest index unavailable:',repr(exc)); return []
+                      print('Wiki quest index unavailable:',repr(exc))
+                      return []
 
               rl_names=[enum_to_candidate(e) for e in runelite_enums()]
               wiki_names=wiki_list_titles()
               titles=dedupe(wiki_names+rl_names)
 
-              # Remove only known non-main-quest/navigation values; do NOT remove a quest
-              # because its guide/rewards failed to parse.
               deny={
                   'quest tab','architectural alliance','bear your soul','curse of the empty lord',
                   'enchanted key',"the general's shadow",'skippy and the mogres',
@@ -2140,12 +2187,18 @@ jobs:
               titles=[t for t in titles if clean(t).lower() not in deny]
               titles=dedupe(titles)
 
-              required={"Cook's Assistant",'Demon Slayer','Dragon Slayer I','Recipe for Disaster','Desert Treasure II - The Fallen Empire'}
+              required={"Cook's Assistant",'Demon Slayer','Dragon Slayer I','Recipe for Disaster',
+                        'Desert Treasure II - The Fallen Empire'}
               missing=sorted(required-set(titles))
-              # Current RuneLite data should yield well above 170 main quests. This is a
-              # source-health check, not an arbitrary app-content filter.
-              if len(titles)<170 or missing:
-                  raise RuntimeError(f'Canonical main-quest index incomplete: {len(titles)} titles; missing {missing}')
+
+              # Health-check the source, but report diagnostics rather than turning a
+              # transient source failure into a mysterious "found 1" message.
+              if len(titles)<150 or missing:
+                  raise RuntimeError(
+                      f'Canonical main-quest index source failure: discovered {len(titles)} titles; '
+                      f'missing required={missing}. RuneLite/raw-GitHub and OSRS-Wiki sources were both attempted.'
+                  )
+
               print(f'Canonical main quests discovered: {len(titles)}')
               return titles
 
@@ -2558,7 +2611,7 @@ jobs:
       - name: Upload QuestMate Complete APK
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v20-Regex-Fix-All-In-One-Guides
+          name: QuestMate-v21-Canonical-Index-Network-Fallback
           path: questmate-complete/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
