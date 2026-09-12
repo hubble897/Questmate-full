@@ -1,4 +1,4 @@
-name: Build QuestMate Separate v39 - Clickable Quest Links
+name: Build QuestMate Separate v40 - Clickable Quest Links
 
 on:
   workflow_dispatch:
@@ -78,22 +78,22 @@ jobs:
           }
 
           android {
-              namespace 'com.questmate.separate.v39'
+              namespace 'com.questmate.separate.v40'
               compileSdk 35
 
               defaultConfig {
-                  applicationId 'com.questmate.separate.v39'
+                  applicationId 'com.questmate.separate.v40'
                   minSdk 26
                   targetSdk 35
-                  versionCode 39
-                  versionName '39.0-missing-guides-fixed'
+                  versionCode 40
+                  versionName '40.0-validator-repair-order-fixed'
               }
           }
           EOF
 
           cat > questmate-complete/app/src/main/res/values/strings.xml <<'EOF'
           <resources>
-              <string name="app_name">QuestMate Separate v39</string>
+              <string name="app_name">QuestMate Separate v40</string>
           </resources>
           EOF
 
@@ -113,7 +113,7 @@ jobs:
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <application
                   android:allowBackup="true"
-                  android:label="QuestMate Separate v39"
+                  android:label="QuestMate Separate v40"
                   android:theme="@style/AppTheme"
                   android:usesCleartextTraffic="false">
                   <activity
@@ -2735,18 +2735,28 @@ jobs:
           weak=[q['name'] for q in rebuilt if hard_incomplete(q)]
           short_but_valid=[q['name'] for q in rebuilt if not hard_incomplete(q) and (len(q.get('steps',[]))<3 or quality(q.get('steps',[]))<45)]
           missing_rewards=[q['name'] for q in rebuilt if not q.get('rewards')]
+          # Initial gate only blocks true placeholders/sub-guide shortcuts.
+          # Terse but concrete actions are deliberately deferred to the global full-guide
+          # repair pass below, which replaces them from the full OSRS Wiki walkthrough.
+          # The final shipping gate still rejects any terse fragments that remain afterwards.
           unresolved=[]
+          terse_pending=[]
           for q in rebuilt:
               for st in q.get('steps',[]):
                   txt=clean(st.get('text',''))
-                  if BAD.search(txt) or SUBGUIDE.match(txt) or VAGUE.match(txt) or is_terse_fragment(txt):
+                  if BAD.search(txt) or SUBGUIDE.match(txt) or VAGUE.match(txt):
                       unresolved.append((q['name'],txt))
+                  elif is_terse_fragment(txt):
+                      terse_pending.append((q['name'],txt))
+                      q['needsDetailRepair']=True
           if weak:
               raise RuntimeError('Walkthrough content genuinely missing/unusable: '+', '.join(weak[:20]))
           if missing_rewards:
               raise RuntimeError('Reward metadata missing for: '+', '.join(missing_rewards[:20]))
           if unresolved:
               raise RuntimeError('Placeholder/sub-guide text remains: '+repr(unresolved[:10]))
+          if terse_pending:
+              print('INFO: deferring terse concrete steps to global repair pass:', repr(terse_pending[:20]))
           if short_but_valid:
               print('INFO: short but complete quest guides accepted:', ', '.join(short_but_valid[:40]))
 
@@ -2767,7 +2777,7 @@ jobs:
               f'Embedded seed fallbacks: {counts["seed"]}\n'
               f'Guides flagged for manual review: {counts["weak"]}\n'
               f'Entries missing parsed rewards: {counts["missing_rewards"]}\n'
-              'v26 audits every generated quest for placeholders, terse heading fragments, sub-guide shortcuts and duplicate summary rows; it prefers the full OSRS Wiki walkthrough, expands matching sections into concrete actions, and fails the build instead of shipping unresolved filler.\n'
+              'v40 audits every generated quest for placeholders and sub-guide shortcuts before repair, then runs a global full-guide repair pass for terse concrete steps; the final shipping gate rejects any placeholder, sub-guide shortcut, terse fragment, or incomplete guide that remains.\n'
               'Defence XP quests are marked blue; Prayer XP quests are marked yellow. See guide-audit.csv for filtered entries.\n'
               'No external wiki links are stored in quests.json.\n', encoding='utf-8')
           print(REPORT.read_text())
@@ -2903,8 +2913,8 @@ jobs:
           PYEOF
           python3 /tmp/build_cape_route.py
 
-          cat > questmate-complete/app/src/main/java/com/questmate/separate/v39/MainActivity.java <<'EOF'
-          package com.questmate.separate.v39;
+          cat > questmate-complete/app/src/main/java/com/questmate/separate/v40/MainActivity.java <<'EOF'
+          package com.questmate.separate.v40;
 
           import android.app.Activity;
           import android.os.Bundle;
@@ -3044,7 +3054,7 @@ jobs:
 
               private void showList() {
                   LinearLayout p=page(); root=p;
-                  TextView title=tv("QuestMate Separate v39",30,TEXT,true); p.addView(title);
+                  TextView title=tv("QuestMate Separate v40",30,TEXT,true); p.addView(title);
                   TextView sub=tv(quests.size()+" verified quests • BLUE titles = Defence XP • YELLOW titles = Prayer XP",15,MUTED,false); p.addView(sub);
                   EditText search=new EditText(this); search.setHint("Search quests..."); search.setHintTextColor(MUTED); search.setTextColor(TEXT);
                   search.setSingleLine(true); search.setBackgroundColor(PANEL); search.setPadding(dp(14),dp(12),dp(14),dp(12)); margin(search,0,14,0,10); p.addView(search);
@@ -3461,7 +3471,7 @@ jobs:
           route_names={x.get('questName') for x in route if x.get('type')=='quest'}
           assert {q.get('name') for q in d} <= route_names, 'Quest Cape route does not cover every canonical quest'
           assert route[-1].get('title','').startswith('Quest Cape'), 'Quest Cape final milestone missing'
-          java_src=open('questmate-complete/app/src/main/java/com/questmate/separate/v39/MainActivity.java',encoding='utf-8').read()
+          java_src=open('questmate-complete/app/src/main/java/com/questmate/separate/v40/MainActivity.java',encoding='utf-8').read()
           assert 'questLinkedTv' in java_src and 'ClickableSpan' in java_src and 'LinkMovementMethod' in java_src, 'Clickable quest-link support missing'
           assert 'questLinkedTv(rs.detail' in java_src and 'questLinkedTv((n++)+". "+s.text' in java_src, 'Quest references are not linked across route/walkthrough text'
           assert len(d) >= 170, f'Expected the complete canonical OSRS quest database, found {len(d)}'
@@ -3542,7 +3552,7 @@ jobs:
         shell: bash
         run: |
           set -e
-          SRC="questmate-complete/app/src/main/java/com/questmate/separate/v39/MainActivity.java"
+          SRC="questmate-complete/app/src/main/java/com/questmate/separate/v40/MainActivity.java"
           grep -F 'QUEST CAPE WALKTHROUGH' "$SRC"
           grep -F 'explicitDefenceRewardQuest' "$SRC"
           grep -F 'explicitPrayerRewardQuest' "$SRC"
@@ -3550,10 +3560,10 @@ jobs:
           grep -F 'DEFENCE_BLUE' "$SRC"
           echo 'Walkthrough button and reward title colour logic verified.'
 
-      - name: Upload QuestMate Separate v39 APK
+      - name: Upload QuestMate Separate v40 APK
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v39-Missing-Guides-Fixed
+          name: QuestMate-v40-Validator-Repair-Order-Fixed
           path: questmate-complete/app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload v39 guide audit
