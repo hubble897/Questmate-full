@@ -1,4 +1,4 @@
-name: Build QuestMate Complete - Canonical Index Fallback Fix v28
+name: Build QuestMate Complete - Reward Leakage and Terse Step Fix v29
 
 on:
   workflow_dispatch:
@@ -1322,6 +1322,9 @@ jobs:
           VAGUE = re.compile(r"(?i)^\s*(?:solve|complete|finish|do|perform|follow|continue|defeat)\s+(?:the\s+)?(?:[a-z0-9' -]+\s+)?(?:puzzle|section|part|route|fight|boss|trial|challenge|steps?|sub-?guide)\s*[.!]?\s*$")
           GENERIC = re.compile(r'(?i)^\s*(?:do|complete|perform|finish|continue)\s+(?:the\s+)?(?:next\s+)?step\s*\.?\s*$|^\s*solve\s+(?:the\s+)?puzzle\s*\.?\s*$')
           TERSE_ACTION = re.compile(r"(?i)^\s*(?:find(?:ing)?|locate|return|go|travel|head|talk|speak|meet|bring|get|obtain|collect|enter|leave|defeat|kill|fight|solve|complete|finish|use|take|make|craft|smith|mine|search|inspect|read|climb|cross|board|open|unlock)\b")
+          # Reward/unlock metadata sometimes leaks into helper-derived step arrays. These are
+          # not quest instructions and must never be treated as walkthrough actions.
+          REWARD_LIKE_STEP = re.compile(r"(?i)^\s*(?:use of|access to|ability to|permission to|unlock(?:s|ed)?\b|reward(?:s)?\b|quest points?\b|(?:[0-9][0-9,]*)\s+(?:experience|xp)\b)")
           SPACE = re.compile(r'\s+')
 
           def is_terse_fragment(text):
@@ -1330,7 +1333,7 @@ jobs:
               Real detailed instructions normally contain more than four words or
               include concrete route/dialogue/item information."""
               t=clean(text)
-              if not t or not TERSE_ACTION.search(t):
+              if not t or REWARD_LIKE_STEP.search(t) or not TERSE_ACTION.search(t):
                   return False
               words=re.findall(r"[A-Za-z0-9']+", t)
               return len(words) <= 4
@@ -1487,7 +1490,7 @@ jobs:
 
               def add_step(sec, value):
                   value=clean(value)
-                  if not value or len(value)<8 or BAD.search(value):
+                  if not value or len(value)<8 or BAD.search(value) or REWARD_LIKE_STEP.search(value):
                       return
                   low=value.lower()
                   # Skip obvious page furniture and pure dialogue-choice number rows.
@@ -1586,7 +1589,7 @@ jobs:
               out=[]; seen=set()
               def add(value, sec=section):
                   value=clean(value)
-                  if not value or len(value)<8 or BAD.search(value): return
+                  if not value or len(value)<8 or BAD.search(value) or REWARD_LIKE_STEP.search(value): return
                   if SUBGUIDE.match(value) or VAGUE.match(value): return
                   key=value.lower()
                   if key in seen: return
@@ -1818,7 +1821,7 @@ jobs:
               for st in steps or []:
                   sec=clean(st.get('section','Walkthrough'))
                   txt=clean(st.get('text',''))
-                  if not txt or BAD.search(txt) or GENERIC.search(txt):
+                  if not txt or BAD.search(txt) or GENERIC.search(txt) or REWARD_LIKE_STEP.search(txt):
                       continue
                   key=re.sub(r'\s+',' ',txt.lower()).strip()
                   if key in seen:
@@ -2800,7 +2803,7 @@ jobs:
                       }
                       TextView step=tv((n++)+". "+s.text,18,TEXT,false); margin(step,0,3,0,8); p.addView(step);
                   }
-                  if (q.steps.isEmpty()) p.addView(tv("DATA INTEGRITY ERROR: this quest was not allowed to ship without a walkthrough. Please use the v27 artifact.",17,PRAYER_YELLOW,true));
+                  if (q.steps.isEmpty()) p.addView(tv("DATA INTEGRITY ERROR: this quest was not allowed to ship without a walkthrough. Please use the v29 artifact.",17,PRAYER_YELLOW,true));
 
                   if (!q.rewards.isEmpty()) { p.addView(heading("Quest Rewards")); addBullets(p,q.rewards); TextView rm=tv("Reward metadata: " + (q.rewardSource.isEmpty()?"verified build sources":q.rewardSource) + " • " + q.rewardCount + " reward entries",13,MUTED,false); p.addView(rm); }
 
@@ -3021,7 +3024,7 @@ jobs:
             blob=' '.join(map(str,q.get('rewards',[]))).lower()
             q['defenceReward']=bool(re.search(r'(?i)(?:defen[cs]e.{0,35}(?:experience|\bxp\b)|(?:experience|\bxp\b).{0,35}defen[cs]e|\d[\d,.]*\s*defen[cs]e)',blob)) or q.get('name') in defence_fallback
             q['prayerReward']=bool(re.search(r'(?i)(?:prayer.{0,35}(?:experience|\bxp\b)|(?:experience|\bxp\b).{0,35}prayer|\d[\d,.]*\s*prayer)',blob)) or q.get('name') in prayer_fallback
-            q['rewardHighlightMetadata']={'defenceXpReward':q['defenceReward'],'prayerXpReward':q['prayerReward'],'detectedFrom':'v27 merged reward metadata + fallback'}
+            q['rewardHighlightMetadata']={'defenceXpReward':q['defenceReward'],'prayerXpReward':q['prayerReward'],'detectedFrom':'v29 merged reward metadata + fallback'}
 
           DB.write_text(json.dumps(data,ensure_ascii=False,separators=(',',':')),encoding='utf-8')
           Path('questmate-complete/v27-guide-repair.txt').write_text('\n'.join(f'{a} | {b} | steps={c} | score={d}' for a,b,c,d in repaired) or 'All existing guides were already at least as detailed as the v27 repair candidates.',encoding='utf-8')
@@ -3104,13 +3107,13 @@ jobs:
       - name: Upload QuestMate Complete APK
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v28-Canonical-Index-Fallback-Fix
+          name: QuestMate-v29-Reward-Leakage-and-Terse-Step-Fix
           path: questmate-complete/app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload v27 guide audit
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v28-Guide-Audit
+          name: QuestMate-v29-Guide-Audit
           path: |
             questmate-complete/guide-audit.csv
             questmate-complete/guide-build-report.txt
