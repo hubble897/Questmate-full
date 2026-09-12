@@ -1,4 +1,4 @@
-name: Build QuestMate Complete - Canonical Index Network Fallback v21
+name: Build QuestMate Complete - Quest List + Reward Highlight Fix v23
 
 on:
   workflow_dispatch:
@@ -85,8 +85,8 @@ jobs:
                   applicationId 'com.questmate.complete'
                   minSdk 26
                   targetSdk 35
-                  versionCode 21
-                  versionName '21.0-canonical-index-network-fallback'
+                  versionCode 23
+                  versionName '23.0-quest-list-reward-highlight-fix'
               }
           }
           EOF
@@ -1632,6 +1632,17 @@ jobs:
                   return expand_subguide_shortcuts(out,full_markup,quick_markup,quest_title)
               return out
 
+          def safe_expand_candidate(steps, full_markup, quick_markup, quest_title, label):
+              """Reject one broken source candidate without aborting the entire quest build."""
+              try:
+                  expanded=expand_subguide_shortcuts(steps,full_markup,quick_markup,quest_title)
+                  expanded=strip_generic_steps(expanded)
+                  if any(SUBGUIDE.match(clean(x.get('text',''))) or VAGUE.match(clean(x.get('text',''))) for x in expanded):
+                      raise RuntimeError('placeholder/sub-guide text survived candidate expansion')
+                  return expanded, ''
+              except Exception as exc:
+                  return [], f'{label}: {exc}'
+
           def parse_rewards(markup):
               soup=safe_soup(markup)
               if soup is None: return []
@@ -1997,16 +2008,34 @@ jobs:
           def reward_blob(q):
               return ' '.join(str(x) for x in q.get('rewards',[])).lower()
 
+          def norm_reward_name(name):
+              return re.sub(r'[^a-z0-9]','',clean(name).lower())
+
+          DEFENCE_REWARD_KEYS={norm_reward_name(x) for x in DEFENCE_REWARD_FALLBACK}
+          PRAYER_REWARD_KEYS={norm_reward_name(x) for x in PRAYER_REWARD_FALLBACK}
+
+          def reward_mentions_skill_xp(blob, skill_words):
+              # Reward metadata can be worded as "Defence experience", "Defence XP",
+              # "2,000 Defence", or "experience in Defence". Accept all of those while
+              # still requiring reward-context evidence.
+              b=' '+blob.lower()+' '
+              if not any(w in b for w in skill_words):
+                  return False
+              return (
+                  'experience' in b or ' xp' in b or
+                  bool(re.search(r'\b\d[\d,\.]*\s*(?:defence|defense|prayer)\b', b)) or
+                  bool(re.search(r'\b(?:defence|defense|prayer)\s*[:\-]?\s*\d[\d,\.]*\b', b))
+              )
+
           def has_defence_reward(q):
               blob=reward_blob(q)
-              direct=(('defence' in blob or 'defense' in blob) and
-                      ('experience' in blob or 'xp' in blob))
-              return direct or q.get('name','') in DEFENCE_REWARD_FALLBACK
+              direct=reward_mentions_skill_xp(blob,('defence','defense'))
+              return direct or norm_reward_name(q.get('name','')) in DEFENCE_REWARD_KEYS
 
           def has_prayer_reward(q):
               blob=reward_blob(q)
-              direct=('prayer' in blob and ('experience' in blob or 'xp' in blob))
-              return direct or q.get('name','') in PRAYER_REWARD_FALLBACK
+              direct=reward_mentions_skill_xp(blob,('prayer',))
+              return direct or norm_reward_name(q.get('name','')) in PRAYER_REWARD_KEYS
 
           def has_real_reward(q):
               rewards=[clean(x) for x in q.get('rewards',[]) if clean(x)]
@@ -2184,7 +2213,27 @@ jobs:
                   "daddy's home","hopespear's will",'vale totems','his faithful servants',
                   'barbarian training','knight waves training grounds','stronghold of security'
               }
-              titles=[t for t in titles if clean(t).lower() not in deny]
+              def is_real_main_quest_title(t):
+                  t=clean(t)
+                  low=t.lower()
+                  if not t or low in deny:
+                      return False
+                  # Wiki category/index/subpage links are not quests.
+                  if low.startswith('quests/'):
+                      return False
+                  if low in {
+                      'quests','quest list','quest points','quest difficulties',
+                      'optimal quest guide','quest experience','experienced',
+                      'grandmaster','intermediate','master','novice','special'
+                  }:
+                      return False
+                  # Slash-titled Quests/* pages are category/index pages. Other slash
+                  # subpages (Quick guide, Strategy, etc.) are not canonical quest titles.
+                  if '/quick guide' in low or '/strategy' in low:
+                      return False
+                  return True
+
+              titles=[t for t in titles if is_real_main_quest_title(t)]
               titles=dedupe(titles)
 
               required={"Cook's Assistant",'Demon Slayer','Dragon Slayer I','Recipe for Disaster',
@@ -2253,23 +2302,31 @@ jobs:
               runelite=strip_generic_steps(qh_steps(q['name']))
               seed=strip_generic_steps(good_seed_steps(q))
 
-              # v15 rule for EVERY quest: named sub-guide shortcuts are illegal.
-              # Expand them into their real steps before scoring/selecting a source.
-              quick_steps=strip_generic_steps(expand_subguide_shortcuts(quick_steps,full,quick,q['name']))
-              full_steps=strip_generic_steps(expand_subguide_shortcuts(full_steps,full,quick,q['name']))
-              runelite=strip_generic_steps(expand_subguide_shortcuts(runelite,full,quick,q['name']))
-              seed=strip_generic_steps(expand_subguide_shortcuts(seed,full,quick,q['name']))
+              # Expand each candidate independently. A broken sub-guide pointer in one
+              # source must not abort all 189 quests; that candidate is rejected instead.
+              candidate_errors=[]
+              quick_steps,err=safe_expand_candidate(quick_steps,full,quick,q['name'],'OSRS Wiki quick guide')
+              if err: candidate_errors.append(err)
+              full_steps,err=safe_expand_candidate(full_steps,full,quick,q['name'],'OSRS Wiki full guide')
+              if err: candidate_errors.append(err)
+              runelite,err=safe_expand_candidate(runelite,full,quick,q['name'],'RuneLite Quest Helper')
+              if err: candidate_errors.append(err)
+              seed,err=safe_expand_candidate(seed,full,quick,q['name'],'embedded Quest Helper seed')
+              if err: candidate_errors.append(err)
 
-              # v14 chooses the most detailed complete source, not merely the first source
-              # that passes a minimum quality threshold. This is important for long quests:
-              # a 70-step full walkthrough must beat a 10-step summary.
               choices=[
                   ('RuneLite Quest Helper', runelite),
                   ('OSRS Wiki quick guide', quick_steps),
                   ('OSRS Wiki full guide', full_steps),
                   ('embedded Quest Helper seed', seed),
               ]
-              source,best=max(choices,key=lambda pair:detail_score(pair[1]))
+              viable=[pair for pair in choices if pair[1] and detail_score(pair[1])>-100000]
+              if not viable:
+                  raise RuntimeError(
+                      f"{q['name']}: no complete all-in-one walkthrough candidate remained. "
+                      f"Candidate failures: {' | '.join(candidate_errors)}"
+                  )
+              source,best=max(viable,key=lambda pair:detail_score(pair[1]))
               q['steps']=strip_generic_steps(best)
               if source=='OSRS Wiki': counts['wiki']+=1
               elif source=='RuneLite Quest Helper': counts['runelite']+=1
@@ -2292,6 +2349,14 @@ jobs:
               q['rewardSource']=' + '.join(sources)
               q['rewardsVerified']=bool(wiki_rewards or runelite_rewards)
               q['rewardCount']=len(rewards)
+              q['rewardMetadata']={
+                  'authoritativeSource':'OSRS Wiki' if wiki_rewards else ('RuneLite Quest Helper' if runelite_rewards else 'embedded metadata'),
+                  'sourceList':sources,
+                  'wikiRewardCount':len(wiki_rewards),
+                  'runeliteRewardCount':len(runelite_rewards),
+                  'embeddedRewardCount':len(seed_rewards),
+                  'mergedRewardCount':len(rewards),
+              }
 
               if q['steps']:
                   existing=clean(q.get('start',''))
@@ -2309,9 +2374,13 @@ jobs:
                   q=patch_demon_slayer(q)
               if norm_name in ('deserttreasureiithefallenempire','deserttreasure2thefallenempire','deserttreasureii'):
                   q=patch_desert_treasure_ii(q,full_steps,quick_steps,runelite)
-              q['steps']=strip_generic_steps(expand_subguide_shortcuts(q.get('steps',[]),full,quick,q['name']))
+              try:
+                  q['steps']=strip_generic_steps(expand_subguide_shortcuts(q.get('steps',[]),full,quick,q['name']))
+              except Exception as exc:
+                  raise RuntimeError(f"{q['name']}: final all-in-one expansion failed after choosing {source}: {exc}")
               if any(SUBGUIDE.match(clean(x.get('text',''))) or VAGUE.match(clean(x.get('text',''))) for x in q['steps']):
-                  raise RuntimeError(f"{q['name']}: vague/sub-guide instruction survived final expansion")
+                  bad=[clean(x.get('text','')) for x in q['steps'] if SUBGUIDE.match(clean(x.get('text',''))) or VAGUE.match(clean(x.get('text','')))]
+                  raise RuntimeError(f"{q['name']}: vague/sub-guide instruction survived final expansion: {bad[:5]}")
 
               # Never invent a reward placeholder. Missing reward metadata is an audit
               # failure so the APK cannot claim incomplete rewards as real data.
@@ -2320,6 +2389,11 @@ jobs:
 
               q['defenceReward']=has_defence_reward(q)
               q['prayerReward']=has_prayer_reward(q)
+              q['rewardHighlightMetadata']={
+                  'defenceXpReward':q['defenceReward'],
+                  'prayerXpReward':q['prayerReward'],
+                  'detectedFrom':'merged reward metadata + normalized verified fallback'
+              }
 
               score=quality(q['steps'])
               if score<45: counts['weak']+=1
@@ -2479,6 +2553,8 @@ jobs:
                       for (Quest quest: quests) {
                           if (!q.isEmpty() && !quest.name.toLowerCase(Locale.ROOT).contains(q)) continue;
                           String rowLabel=quest.name + (quest.defenceReward ? "   • DEFENCE XP" : "") + (quest.prayerReward ? "   • PRAYER XP" : "");
+                          // Prayer takes yellow priority when a quest awards both skills;
+                          // otherwise Defence quests are blue exactly as requested.
                           int rowColor = quest.prayerReward ? PRAYER_YELLOW : (quest.defenceReward ? DEFENCE_BLUE : TEXT);
                           TextView row=tv(rowLabel,19,rowColor,true); row.setBackgroundColor(PANEL); row.setPadding(dp(14),dp(13),dp(14),dp(13)); margin(row,0,4,0,4);
                           row.setOnClickListener(v->showQuest(quest)); list.addView(row); shown++;
@@ -2578,6 +2654,8 @@ jobs:
           assert all('rewardSource' in q and 'rewardsVerified' in q and 'rewardCount' in q for q in d), 'Reward metadata fields missing'
           assert all(len(q.get('steps',[]))>=3 for q in d), 'Every retained quest must have a full walkthrough'
           assert all(q.get('rewards') for q in d), 'Every retained quest must expose a rewards section'
+          bad_titles=[q.get('name','') for q in d if q.get('name','').lower().startswith('quests/') or q.get('name','').lower() in {'quests','experienced','grandmaster','intermediate','master','novice','special'}]
+          assert not bad_titles, f'Non-quest category/index headings leaked into quest list: {bad_titles}'
           corsair=[q for q in d if q['name']=='The Corsair Curse']
           assert corsair and len(corsair[0].get('steps',[]))>=15, 'Corsair Curse detailed patch missing'
           bad_words=('relevant npc','relevant location','unknown quest','placeholder','go to the relevant','talk to the relevant')
@@ -2611,7 +2689,7 @@ jobs:
       - name: Upload QuestMate Complete APK
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v21-Canonical-Index-Network-Fallback
+          name: QuestMate-v23-Quest-List-and-Reward-Highlight-Fix
           path: questmate-complete/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
