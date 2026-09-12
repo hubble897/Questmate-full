@@ -81,19 +81,40 @@ jobs:
               namespace 'com.questmate.complete'
               compileSdk 35
 
+              signingConfigs {
+                  stable {
+                      storeFile rootProject.file('questmate-stable.jks')
+                      storePassword 'questmate2026'
+                      keyAlias 'questmate'
+                      keyPassword 'questmate2026'
+                  }
+              }
+
               defaultConfig {
-                  applicationId 'com.questmate.complete'
+                  // New package ID avoids the signature conflict with older QuestMate APKs.
+                  // Keep this applicationId in all future versions so v14+ can update normally.
+                  applicationId 'com.questmate.complete.stable'
                   minSdk 26
                   targetSdk 35
-                  versionCode 10
-                  versionName '13.0-quests-only-defence-prayer-colours'
+                  versionCode 14
+                  versionName '14.0-stable-install-fix'
+              }
+
+              buildTypes {
+                  debug {
+                      signingConfig signingConfigs.stable
+                  }
+                  release {
+                      signingConfig signingConfigs.stable
+                      minifyEnabled false
+                  }
               }
           }
           EOF
 
           cat > questmate-complete/app/src/main/res/values/strings.xml <<'EOF'
           <resources>
-              <string name="app_name">QuestMate Complete</string>
+              <string name="app_name">QuestMate Complete v14</string>
           </resources>
           EOF
 
@@ -2174,27 +2195,40 @@ jobs:
           PY
           cat questmate-complete/guide-build-report.txt
 
+      - name: Restore stable QuestMate signing key
+        shell: bash
+        run: |
+          cat > /tmp/questmate-stable.jks.b64 <<'KEYSTORE'
+          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
+          KEYSTORE
+          base64 -d /tmp/questmate-stable.jks.b64 > questmate-complete/questmate-stable.jks
+          keytool -list -keystore questmate-complete/questmate-stable.jks -storepass questmate2026 -alias questmate >/dev/null
+          echo "Stable QuestMate signing key restored successfully."
+
       - name: Build debug APK
         working-directory: questmate-complete
         run: gradle :app:assembleDebug --no-daemon --stacktrace
 
-      - name: Verify APK exists
+      - name: Verify and rename installable APK
         run: |
           test -f questmate-complete/app/build/outputs/apk/debug/app-debug.apk
-          ls -lh questmate-complete/app/build/outputs/apk/debug/app-debug.apk
+          cp questmate-complete/app/build/outputs/apk/debug/app-debug.apk questmate-complete/QuestMate-v14-Installable.apk
+          test -s questmate-complete/QuestMate-v14-Installable.apk
+          ls -lh questmate-complete/QuestMate-v14-Installable.apk
+          keytool -printcert -jarfile questmate-complete/QuestMate-v14-Installable.apk | head -40 || true
 
-      - name: Upload QuestMate Complete APK
+      - name: Upload QuestMate v14 APK
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v13-Quests-Only-Defence-Prayer
-          path: questmate-complete/app/build/outputs/apk/debug/app-debug.apk
+          name: QuestMate-v14-INSTALL-THIS
+          path: questmate-complete/QuestMate-v14-Installable.apk
           if-no-files-found: error
           retention-days: 30
 
       - name: Upload guide build report
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v13-Guide-Audit
+          name: QuestMate-v14-Guide-Audit
           path: |
             questmate-complete/guide-build-report.txt
             questmate-complete/guide-audit.csv
