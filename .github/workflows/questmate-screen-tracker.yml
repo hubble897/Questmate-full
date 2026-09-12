@@ -2004,36 +2004,95 @@ jobs:
               return bool(re.search(r'\bquest\s+points?\b|\bqp\b', blob, re.I))
 
           def canonical_quest_titles():
-              # Quest membership comes from the official OSRS Quests/List tables, not from
-              # rewards parsing. This avoids the v15 bug where a temporary reward-parser
-              # failure filtered almost the entire app down to one quest.
+              # Read the official OSRS Quests/List tables and locate the actual QUEST
+              # column from each table header. v16 incorrectly assumed the quest name was
+              # always cells[1], which on the current wiki layout can be another column.
+              # That produced ~180 non-quest values which then matched almost none of the
+              # embedded guides, leaving only one retained quest.
               markup=wiki_parse('Quests/List')
               soup=safe_soup(markup)
               if soup is None:
                   raise RuntimeError('Could not load the official OSRS Quests/List page.')
+
               wanted={"free-to-play quests","members' quests","members quests"}
               titles=[]; active=False
+
+              def valid_title(title):
+                  title=clean(title)
+                  if not title: return ''
+                  low=title.lower()
+                  if low in ('name','quest','quests','difficulty','length','series','release date','members'):
+                      return ''
+                  if title.startswith(('File:','Category:','Template:','Help:','Special:')):
+                      return ''
+                  if '/Quick guide' in title or '/Strategy' in title:
+                      return ''
+                  return title
+
               for node in soup.find_all(['h2','table']):
                   if node.name=='h2':
                       label=clean(node.get_text(' ',strip=True)).lower()
                       active=label in wanted
-                      if titles and label.startswith(('miniquest','quest classifications','see also')):
+                      if label.startswith(('miniquest','quest classifications','see also')):
                           active=False
                       continue
                   if node.name!='table' or not active:
                       continue
-                  for tr in node.find_all('tr'):
+
+                  rows=node.find_all('tr')
+                  if not rows:
+                      continue
+
+                  # Find the table column explicitly labelled Quest or Name.
+                  quest_col=None
+                  for tr in rows[:3]:
+                      hdr=tr.find_all(['th','td'],recursive=False)
+                      labels=[clean(c.get_text(' ',strip=True)).lower() for c in hdr]
+                      for i,label in enumerate(labels):
+                          if label in ('quest','name') or label.startswith('quest '):
+                              quest_col=i
+                              break
+                      if quest_col is not None:
+                          break
+
+                  for tr in rows:
                       cells=tr.find_all(['td','th'],recursive=False)
-                      if len(cells)<2: continue
-                      name_cell=cells[1]
-                      link=name_cell.find('a',href=True)
-                      title=clean(link.get('title') if link and link.get('title') else name_cell.get_text(' ',strip=True))
-                      if not title or title.lower() in ('name','quest'): continue
-                      if title.startswith(('File:','Category:','Template:')): continue
-                      titles.append(title)
+                      if not cells:
+                          continue
+
+                      candidates=[]
+                      if quest_col is not None and quest_col < len(cells):
+                          candidates=[cells[quest_col]]
+                      else:
+                          # Layout fallback: inspect cells left-to-right and use the first
+                          # cell containing a normal main-article link.
+                          candidates=cells
+
+                      picked=''
+                      for cell in candidates:
+                          for link in cell.find_all('a',href=True):
+                              title=valid_title(link.get('title') or link.get_text(' ',strip=True))
+                              if title:
+                                  picked=title
+                                  break
+                          if picked:
+                              break
+
+                      if picked:
+                          titles.append(NAME_FIX.get(picked,picked))
+
               titles=dedupe(titles)
-              if len(titles)<150:
-                  raise RuntimeError(f'Official OSRS quest list only returned {len(titles)} quests; refusing to build a partial app.')
+
+              # Sanity-check both the size and unmistakable quest names so a future wiki
+              # layout change cannot silently create another one-quest APK.
+              required={"Cook's Assistant","Demon Slayer","Dragon Slayer I","Desert Treasure II - The Fallen Empire"}
+              present=set(titles)
+              missing=sorted(required-present)
+              if len(titles)<150 or missing:
+                  raise RuntimeError(
+                      f'Official OSRS quest index parse is invalid: {len(titles)} titles; '
+                      f'missing required quests: {missing}'
+                  )
               return titles
 
           def title_key(title):
@@ -2159,7 +2218,7 @@ jobs:
               f'Embedded seed fallbacks: {counts["seed"]}\n'
               f'Guides flagged for manual review: {counts["weak"]}\n'
               f'Entries missing parsed rewards: {counts["missing_rewards"]}\n'
-              'v16 uses the official OSRS Quests/List as the only quest membership source, then selects the most detailed available ordered walkthrough and recursively expands named sub-guides into the main quest walkthrough for every quest. No Do-X-steps shortcut is permitted.\n'
+              'v17 uses the corrected official OSRS Quests/List quest-column parser as the only quest membership source, then selects the most detailed available ordered walkthrough and recursively expands named sub-guides into the main quest walkthrough for every quest. No Do-X-steps shortcut is permitted.\n'
               'Defence XP quests are marked blue; Prayer XP quests are marked yellow. See guide-audit.csv for filtered entries.\n'
               'No external wiki links are stored in quests.json.\n', encoding='utf-8')
           print(REPORT.read_text())
@@ -2401,6 +2460,9 @@ jobs:
           p='questmate-complete/app/src/main/assets/quests.json'
           d=json.load(open(p,encoding='utf-8'))
           assert len(d) >= 150, f'Expected the canonical OSRS quest database, found {len(d)}'
+          names={q.get('name','') for q in d}
+          for must in ("Cook's Assistant","Demon Slayer","Dragon Slayer I","Desert Treasure II - The Fallen Empire"):
+              assert must in names, f'Missing canonical quest after generation: {must}'
           raw=open(p,encoding='utf-8').read().lower()
           assert 'oldschool.runescape.wiki' not in raw
           assert 'wikiurl' not in raw
@@ -2447,7 +2509,7 @@ jobs:
       - name: Upload QuestMate Complete APK
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v16-Canonical-All-In-One-Walkthroughs
+          name: QuestMate-v17-Fixed-Canonical-Quest-Index
           path: questmate-complete/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
