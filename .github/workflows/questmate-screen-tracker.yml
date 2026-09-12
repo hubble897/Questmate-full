@@ -1,4 +1,4 @@
-name: Build QuestMate Complete - All-In-One Verified Guides v19
+name: Build QuestMate Complete - Regex Fixed All-In-One Guides v20
 
 on:
   workflow_dispatch:
@@ -85,8 +85,8 @@ jobs:
                   applicationId 'com.questmate.complete'
                   minSdk 26
                   targetSdk 35
-                  versionCode 19
-                  versionName '19.0-all-in-one-verified-guides'
+                  versionCode 20
+                  versionName '20.0-regex-fixed-all-in-one-guides'
               }
           }
           EOF
@@ -2079,7 +2079,7 @@ jobs:
                       s=f.read_text(encoding='utf-8',errors='ignore')
                       # Everything after the explicit miniquest marker is not a main quest.
                       s=re.split(r'(?is)/\\*\\*.*?mini-?quest.*?\\*/|//\\s*mini-?quest',s,maxsplit=1)[0]
-                      for enum in re.findall(r'\\bQUEST_([A-Z][A-Z0-9_]*)\\s*\\(',s):
+                      for enum in re.findall(r'\bQUEST_([A-Z][A-Z0-9_]*)\s*\(',s):
                           if re.search(r'_STATE_\\d+$',enum):
                               continue
                           enums.append(enum)
@@ -2558,7 +2558,7 @@ jobs:
       - name: Upload QuestMate Complete APK
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v19-All-In-One-Verified-Guides
+          name: QuestMate-v20-Regex-Fix-All-In-One-Guides
           path: questmate-complete/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
