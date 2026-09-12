@@ -1,4 +1,4 @@
-name: Build QuestMate Complete - Reward Leakage and Terse Step Fix v29
+name: Build QuestMate Complete - Reward Leakage and Terse Step Fix v30
 
 on:
   workflow_dispatch:
@@ -2592,9 +2592,14 @@ jobs:
                   q['steps']=remove_redundant_summary_shortcuts(q['steps'])
               except Exception as exc:
                   raise RuntimeError(f"{q['name']}: final all-in-one expansion failed after choosing {source}: {exc}")
-              if any(SUBGUIDE.match(clean(x.get('text',''))) or VAGUE.match(clean(x.get('text',''))) or is_terse_fragment(clean(x.get('text',''))) for x in q['steps']):
-                  bad=[clean(x.get('text','')) for x in q['steps'] if SUBGUIDE.match(clean(x.get('text',''))) or VAGUE.match(clean(x.get('text',''))) or is_terse_fragment(clean(x.get('text','')))]
-                  raise RuntimeError(f"{q['name']}: vague/terse/sub-guide instruction survived final expansion: {bad[:8]}")
+              # Hard-stop unresolved sub-guide/puzzle placeholders here. Short concrete actions
+              # are NOT fatal at this stage: the global repair pass below must replace them
+              # from the full Wiki walkthrough. This avoids aborting before repair can handle
+              # legitimate but under-detailed lines such as "Bring Thurgo the portrait."
+              if any(SUBGUIDE.match(clean(x.get('text',''))) or VAGUE.match(clean(x.get('text',''))) for x in q['steps']):
+                  bad=[clean(x.get('text','')) for x in q['steps'] if SUBGUIDE.match(clean(x.get('text',''))) or VAGUE.match(clean(x.get('text','')))]
+                  raise RuntimeError(f"{q['name']}: vague/sub-guide instruction survived initial expansion: {bad[:8]}")
+              q['needsDetailRepair']=any(is_terse_fragment(clean(x.get('text',''))) for x in q['steps'])
 
               # Never invent a reward placeholder. Missing reward metadata is an audit
               # failure so the APK cannot claim incomplete rewards as real data.
@@ -2803,7 +2808,7 @@ jobs:
                       }
                       TextView step=tv((n++)+". "+s.text,18,TEXT,false); margin(step,0,3,0,8); p.addView(step);
                   }
-                  if (q.steps.isEmpty()) p.addView(tv("DATA INTEGRITY ERROR: this quest was not allowed to ship without a walkthrough. Please use the v29 artifact.",17,PRAYER_YELLOW,true));
+                  if (q.steps.isEmpty()) p.addView(tv("DATA INTEGRITY ERROR: this quest was not allowed to ship without a walkthrough. Please use the v30 artifact.",17,PRAYER_YELLOW,true));
 
                   if (!q.rewards.isEmpty()) { p.addView(heading("Quest Rewards")); addBullets(p,q.rewards); TextView rm=tv("Reward metadata: " + (q.rewardSource.isEmpty()?"verified build sources":q.rewardSource) + " • " + q.rewardCount + " reward entries",13,MUTED,false); p.addView(rm); }
 
@@ -2863,6 +2868,12 @@ jobs:
           ACTION=re.compile(r'(?i)\b(talk|speak|go|travel|walk|run|enter|leave|climb|use|take|pick|collect|give|return|kill|fight|search|open|close|pull|push|operate|equip|wear|buy|bring|head|follow|cross|board|teleport|inspect|read|mine|cut|light|cook|make|place|unlock|drink|cast|pray|dig|craft|smith|choose|select|watch|wait|find|locate|obtain|defeat)\b')
           BAD=re.compile(r'(?i)not yet implemented|no verified walkthrough|unknown|relevant npc|relevant location|placeholder|broken step state|\bdo step\b|\bcomplete this step\b|\bfollow the step\b|\bcontinue the quest\b')
           TERSE=re.compile(r'(?i)^\s*(?:find(?:ing)?|locate|return|go|travel|head|talk|speak|meet|bring|get|obtain|collect|enter|leave|defeat|kill|fight|solve|complete|finish|use|take|make|craft|smith|mine|search|inspect|read|climb|cross|board|open|unlock)\b')
+          REWARD_LIKE=re.compile(r'(?i)^\s*(?:use of|access to|ability to|permission to|unlock(?:s|ed)?\b|reward(?:s)?\b|quest points?\b|(?:[0-9][0-9,]*)\s+(?:experience|xp)\b)')
+
+          def terse(text):
+            t=clean(text)
+            if not t or REWARD_LIKE.search(t) or not TERSE.search(t): return False
+            return len(re.findall(r"[A-Za-z0-9']+",t))<=4
 
           TITLE_ALIAS={
             'fairy tale i - growing pains':'Fairytale I - Growing Pains',
@@ -2947,11 +2958,10 @@ jobs:
                 t=' — '.join(vals)
                 if len(vals)>=2 and ACTION.search(t): txt=t
               txt=clean(txt)
-              if not txt or len(txt)<8 or BAD.search(txt): continue
+              if not txt or len(txt)<8 or BAD.search(txt) or REWARD_LIKE.search(txt): continue
               # Do not keep tiny heading-like actions as standalone steps. They are only
               # useful if paired with the detailed sentence that follows.
-              words=re.findall(r"[A-Za-z0-9']+",txt)
-              if TERSE.search(txt) and len(words)<=4: continue
+              if terse(txt): continue
               key=txt.lower()
               if key in seen: continue
               seen.add(key); out.append({'section':normalize_section(section),'text':txt})
@@ -2963,7 +2973,8 @@ jobs:
             chars=sum(len(clean(x.get('text',''))) for x in steps)
             actions=sum(1 for x in steps if ACTION.search(clean(x.get('text',''))))
             bad=sum(1 for x in steps if BAD.search(clean(x.get('text',''))))
-            return len(steps)*35 + words*2 + chars//20 + actions*12 - bad*5000
+            tiny=sum(1 for x in steps if terse(clean(x.get('text',''))))
+            return len(steps)*35 + words*2 + chars//20 + actions*12 - bad*5000 - tiny*4000
 
           def candidate_titles(name):
             base=TITLE_ALIAS.get(name.lower(),name)
@@ -2993,18 +3004,23 @@ jobs:
               if max(score(c[1]) for c in candidates) >= 500 and any(len(c[1])>=5 for c in candidates):
                 break
             source,best=max(candidates,key=lambda c:score(c[1]))
-            if score(best)>score(existing):
+            existing_has_terse=any(terse(clean(x.get('text',''))) for x in existing) or bool(q.get('needsDetailRepair'))
+            best_is_clean=best and not any(terse(clean(x.get('text',''))) or BAD.search(clean(x.get('text',''))) for x in best)
+            if score(best)>score(existing) or (existing_has_terse and source!='existing' and best_is_clean):
               q['steps']=best
-              q['sourceNote']=f'Guide database v27: full-guide repair selected {source}; all quests are globally audited for missing/placeholder walkthroughs.'
+              q['sourceNote']=f'Guide database v30: global full-guide repair selected {source}; terse fragments are replaced with concrete walkthrough instructions.'
               repaired.append((name,source,len(best),score(best)))
-            # Absolute shipping gate: no quest can reach the APK with no guide or a tiny stub.
+            q.pop('needsDetailRepair',None)
+            # Absolute shipping gate: no quest can reach the APK with no guide, a tiny stub,
+            # a placeholder, reward leakage, or an under-detailed micro-step.
             final=q.get('steps',[]) or []
             texts=[clean(x.get('text','')) for x in final]
             word_total=sum(len(re.findall(r"[A-Za-z0-9']+",t)) for t in texts)
-            bad=[t for t in texts if BAD.search(t)]
-            if len(final)<3 or word_total<45 or bad:
-              raise RuntimeError(f'{name}: v27 could not produce a complete verified walkthrough (steps={len(final)}, words={word_total}, bad={bad[:3]}). Build stopped; no incomplete APK will be uploaded.')
-            if i%20==0: print(f'v27 repair audited {i}/{len(data)} quests')
+            bad=[t for t in texts if BAD.search(t) or REWARD_LIKE.search(t)]
+            tiny=[t for t in texts if terse(t)]
+            if len(final)<3 or word_total<45 or bad or tiny:
+              raise RuntimeError(f'{name}: v30 could not produce a complete detailed walkthrough (steps={len(final)}, words={word_total}, bad={bad[:3]}, terse={tiny[:5]}). Build stopped; no incomplete APK will be uploaded.')
+            if i%20==0: print(f'v30 repair audited {i}/{len(data)} quests')
             time.sleep(0.02)
 
           # Recompute reward-linked colouring after all guide repairs. The reward strings are
@@ -3024,14 +3040,14 @@ jobs:
             blob=' '.join(map(str,q.get('rewards',[]))).lower()
             q['defenceReward']=bool(re.search(r'(?i)(?:defen[cs]e.{0,35}(?:experience|\bxp\b)|(?:experience|\bxp\b).{0,35}defen[cs]e|\d[\d,.]*\s*defen[cs]e)',blob)) or q.get('name') in defence_fallback
             q['prayerReward']=bool(re.search(r'(?i)(?:prayer.{0,35}(?:experience|\bxp\b)|(?:experience|\bxp\b).{0,35}prayer|\d[\d,.]*\s*prayer)',blob)) or q.get('name') in prayer_fallback
-            q['rewardHighlightMetadata']={'defenceXpReward':q['defenceReward'],'prayerXpReward':q['prayerReward'],'detectedFrom':'v29 merged reward metadata + fallback'}
+            q['rewardHighlightMetadata']={'defenceXpReward':q['defenceReward'],'prayerXpReward':q['prayerReward'],'detectedFrom':'v30 merged reward metadata + fallback'}
 
           DB.write_text(json.dumps(data,ensure_ascii=False,separators=(',',':')),encoding='utf-8')
-          Path('questmate-complete/v27-guide-repair.txt').write_text('\n'.join(f'{a} | {b} | steps={c} | score={d}' for a,b,c,d in repaired) or 'All existing guides were already at least as detailed as the v27 repair candidates.',encoding='utf-8')
-          print(f'v27: audited {len(data)} quests; upgraded {len(repaired)} walkthroughs; zero empty guides permitted.')
+          Path('questmate-complete/v30-guide-repair.txt').write_text('\n'.join(f'{a} | {b} | steps={c} | score={d}' for a,b,c,d in repaired) or 'All existing guides were already at least as detailed as the v27 repair candidates.',encoding='utf-8')
+          print(f'v30: audited {len(data)} quests; upgraded {len(repaired)} walkthroughs; zero empty guides permitted.')
           PY
           python3 /tmp/repair_all_guides.py
-          cat questmate-complete/v27-guide-repair.txt | head -80
+          cat questmate-complete/v30-guide-repair.txt | head -80
 
       - name: Verify guide database has no wiki links or placeholder text
         shell: bash
@@ -3057,6 +3073,15 @@ jobs:
           assert all('rewardSource' in q and 'rewardsVerified' in q and 'rewardCount' in q for q in d), 'Reward metadata fields missing'
           assert all(len(q.get('steps',[]))>=3 for q in d), 'Every retained quest must have a full walkthrough'
           assert all(sum(len(re.findall(r"[A-Za-z0-9']+",s.get('text',''))) for s in q.get('steps',[]))>=45 for q in d), 'Every quest must contain substantial walkthrough text, not a tiny stub'
+          terse_re=re.compile(r'(?i)^\s*(?:find(?:ing)?|locate|return|go|travel|head|talk|speak|meet|bring|get|obtain|collect|enter|leave|defeat|kill|fight|solve|complete|finish|use|take|make|craft|smith|mine|search|inspect|read|climb|cross|board|open|unlock)\b')
+          reward_like=re.compile(r'(?i)^\s*(?:use of|access to|ability to|permission to|unlock(?:s|ed)?\b|reward(?:s)?\b|quest points?\b|(?:[0-9][0-9,]*)\s+(?:experience|xp)\b)')
+          terse_left=[]
+          for q in d:
+              for st in q.get('steps',[]):
+                  t=st.get('text','').strip()
+                  if terse_re.search(t) and not reward_like.search(t) and len(re.findall(r"[A-Za-z0-9']+",t))<=4:
+                      terse_left.append((q.get('name'),t))
+          assert not terse_left, f'Under-detailed walkthrough fragments remain after global repair: {terse_left[:12]}'
           fairy=[q for q in d if re.sub(r'[^a-z0-9]','',q.get('name','').lower()) in ('fairytaleiicureaqueen','fairytale2cureaqueen')]
           assert fairy and len(fairy[0].get('steps',[]))>=3, 'Fairytale II - Cure a Queen walkthrough is missing'
           assert not any('no verified walkthrough' in s.get('text','').lower() for q in d for s in q.get('steps',[])), 'No-walkthrough placeholder leaked into database'
@@ -3107,17 +3132,17 @@ jobs:
       - name: Upload QuestMate Complete APK
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v29-Reward-Leakage-and-Terse-Step-Fix
+          name: QuestMate-v30-Reward-Leakage-and-Terse-Step-Fix
           path: questmate-complete/app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload v27 guide audit
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v29-Guide-Audit
+          name: QuestMate-v30-Guide-Audit
           path: |
             questmate-complete/guide-audit.csv
             questmate-complete/guide-build-report.txt
-            questmate-complete/v27-guide-repair.txt
+            questmate-complete/v30-guide-repair.txt
           if-no-files-found: error
           retention-days: 30
 
