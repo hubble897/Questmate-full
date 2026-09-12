@@ -1,4 +1,4 @@
-name: Build QuestMate Complete - Quest List + Reward Highlight Fix v23
+name: Build QuestMate Complete - WGS + Global Summary Step Fix v24
 
 on:
   workflow_dispatch:
@@ -85,8 +85,8 @@ jobs:
                   applicationId 'com.questmate.complete'
                   minSdk 26
                   targetSdk 35
-                  versionCode 23
-                  versionName '23.0-quest-list-reward-highlight-fix'
+                  versionCode 24
+                  versionName '24.0-wgs-global-summary-step-fix'
               }
           }
           EOF
@@ -1632,13 +1632,39 @@ jobs:
                   return expand_subguide_shortcuts(out,full_markup,quick_markup,quest_title)
               return out
 
+          def remove_redundant_summary_shortcuts(steps):
+              """Remove vague summary rows only when detailed sibling steps exist
+              in the same section. This does not invent or omit required actions."""
+              steps=list(steps or [])
+              concrete_by_section={}
+              for st in steps:
+                  sec=clean(st.get('section','')).casefold()
+                  txt=clean(st.get('text',''))
+                  if not txt:
+                      continue
+                  if not SUBGUIDE.match(txt) and not VAGUE.match(txt) and not BAD.search(txt):
+                      concrete_by_section[sec]=concrete_by_section.get(sec,0)+1
+
+              out=[]
+              for st in steps:
+                  sec=clean(st.get('section','')).casefold()
+                  txt=clean(st.get('text',''))
+                  if (SUBGUIDE.match(txt) or VAGUE.match(txt)) and concrete_by_section.get(sec,0)>0:
+                      continue
+                  out.append(st)
+              return out
+
           def safe_expand_candidate(steps, full_markup, quick_markup, quest_title, label):
-              """Reject one broken source candidate without aborting the entire quest build."""
+              """Expand one candidate and reject it only if unresolved shortcut text
+              remains after safe redundant-summary cleanup."""
               try:
                   expanded=expand_subguide_shortcuts(steps,full_markup,quick_markup,quest_title)
                   expanded=strip_generic_steps(expanded)
-                  if any(SUBGUIDE.match(clean(x.get('text',''))) or VAGUE.match(clean(x.get('text',''))) for x in expanded):
-                      raise RuntimeError('placeholder/sub-guide text survived candidate expansion')
+                  expanded=remove_redundant_summary_shortcuts(expanded)
+                  bad=[clean(x.get('text','')) for x in expanded
+                       if SUBGUIDE.match(clean(x.get('text',''))) or VAGUE.match(clean(x.get('text','')))]
+                  if bad:
+                      raise RuntimeError('unresolved placeholder/sub-guide text: '+repr(bad[:5]))
                   return expanded, ''
               except Exception as exc:
                   return [], f'{label}: {exc}'
@@ -2323,8 +2349,8 @@ jobs:
               viable=[pair for pair in choices if pair[1] and detail_score(pair[1])>-100000]
               if not viable:
                   raise RuntimeError(
-                      f"{q['name']}: no complete all-in-one walkthrough candidate remained. "
-                      f"Candidate failures: {' | '.join(candidate_errors)}"
+                      f"{q['name']}: no complete all-in-one walkthrough candidate remained after "
+                      f"expansion and redundant-summary cleanup. Candidate failures: {' | '.join(candidate_errors)}"
                   )
               source,best=max(viable,key=lambda pair:detail_score(pair[1]))
               q['steps']=strip_generic_steps(best)
@@ -2376,6 +2402,7 @@ jobs:
                   q=patch_desert_treasure_ii(q,full_steps,quick_steps,runelite)
               try:
                   q['steps']=strip_generic_steps(expand_subguide_shortcuts(q.get('steps',[]),full,quick,q['name']))
+                  q['steps']=remove_redundant_summary_shortcuts(q['steps'])
               except Exception as exc:
                   raise RuntimeError(f"{q['name']}: final all-in-one expansion failed after choosing {source}: {exc}")
               if any(SUBGUIDE.match(clean(x.get('text',''))) or VAGUE.match(clean(x.get('text',''))) for x in q['steps']):
@@ -2689,7 +2716,7 @@ jobs:
       - name: Upload QuestMate Complete APK
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v23-Quest-List-and-Reward-Highlight-Fix
+          name: QuestMate-v24-WGS-and-Global-Summary-Step-Fix
           path: questmate-complete/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
