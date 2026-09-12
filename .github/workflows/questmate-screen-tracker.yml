@@ -1,4 +1,4 @@
-name: QuestMate v46 - FINAL reward scan + Quest Cape route
+name: QuestMate v47 NEW - ROUTE + COLOURS ONLY
 
 on:
   workflow_dispatch:
@@ -29,12 +29,12 @@ jobs:
       - name: Install guide builder dependencies
         run: python3 -m pip install --disable-pip-version-check requests beautifulsoup4 lxml
 
-      - name: Create complete QuestMate Android project
+      - name: CREATE QM v47 NEW ROUTE + COLOURS APP
         shell: bash
         run: |
           set -euo pipefail
           echo "=================================================="
-          echo "QUESTMATE V46 WORKFLOW IS RUNNING"
+          echo "QUESTMATE V47 NEW WORKFLOW IS RUNNING"
           echo "Stable Java path: com/questmate/app/MainActivity.java"
           echo "=================================================="
 
@@ -80,22 +80,22 @@ jobs:
           }
 
           android {
-              namespace 'com.questmate.v46final'
+              namespace 'com.questmate.v47routecolour'
               compileSdk 35
 
               defaultConfig {
-                  applicationId 'com.questmate.v46final'
+                  applicationId 'com.questmate.v47routecolour'
                   minSdk 26
                   targetSdk 35
-                  versionCode 46
-                  versionName '46.0-final-reward-scan-route'
+                  versionCode 47
+                  versionName '47.0-new-route-colours-only'
               }
           }
           EOF
 
           cat > questmate-complete/app/src/main/res/values/strings.xml <<'EOF'
           <resources>
-              <string name="app_name">QuestMate v46 FIXED</string>
+              <string name="app_name">QM v47 NEW - ROUTE + COLOURS</string>
           </resources>
           EOF
 
@@ -115,7 +115,7 @@ jobs:
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <application
                   android:allowBackup="true"
-                  android:label="QuestMate v46 FIXED"
+                  android:label="QM v47 NEW - ROUTE + COLOURS"
                   android:theme="@style/AppTheme"
                   android:usesCleartextTraffic="false">
                   <activity
@@ -2779,7 +2779,7 @@ jobs:
               f'Embedded seed fallbacks: {counts["seed"]}\n'
               f'Guides flagged for manual review: {counts["weak"]}\n'
               f'Entries missing parsed rewards: {counts["missing_rewards"]}\n'
-              'v46 audits every generated quest for placeholders and sub-guide shortcuts before repair, then runs a global full-guide repair pass for terse concrete steps; the final shipping gate rejects any placeholder, sub-guide shortcut, terse fragment, or incomplete guide that remains.\n'
+              'v47 audits every generated quest for placeholders and sub-guide shortcuts before repair, then runs a global full-guide repair pass for terse concrete steps; the final shipping gate rejects any placeholder, sub-guide shortcut, terse fragment, or incomplete guide that remains.\n'
               'Defence XP quests are marked blue; Prayer XP quests are marked yellow. See guide-audit.csv for filtered entries.\n'
               'No external wiki links are stored in quests.json.\n', encoding='utf-8')
           print(REPORT.read_text())
@@ -2920,7 +2920,7 @@ jobs:
           mkdir -p questmate-complete/app/src/main/java/com/questmate/app
           test -d questmate-complete/app/src/main/java/com/questmate/app
           cat > questmate-complete/app/src/main/java/com/questmate/app/MainActivity.java <<'EOF'
-          package com.questmate.v46final;
+          package com.questmate.v47routecolour;
 
           import android.app.Activity;
           import android.os.Bundle;
@@ -3010,7 +3010,7 @@ jobs:
                   return r.contains("prayer") && (r.contains(" xp") || r.contains("experience"));
               }
               private int actualRewardColour(Quest q) {
-                  // v46: primary source is the build-time scan of the actual Rewards section.
+                  // v47: primary source is the build-time scan of the actual Rewards section.
                   if(q!=null && "yellow".equalsIgnoreCase(q.titleColour)) return PRAYER_YELLOW;
                   if(q!=null && "blue".equalsIgnoreCase(q.titleColour)) return DEFENCE_BLUE;
                   // Runtime re-scan is a second safety net.
@@ -3094,7 +3094,10 @@ jobs:
               private void showList() {
                   LinearLayout p=page(); root=p;
 
-                  // v46: FIRST control on screen. It cannot be hidden below the search box.
+                  TextView unmistakable=tv("YOU ARE USING QM v47 NEW",18,ACCENT,true);
+                  unmistakable.setPadding(dp(8),dp(8),dp(8),dp(12)); p.addView(unmistakable);
+
+                  // v47: FIRST main control on screen. It cannot be hidden below the search box.
                   TextView cape=tv("★  QUEST CAPE: MOST EFFICIENT FULL WALKTHROUGH  →",22,PRAYER_YELLOW,true);
                   cape.setBackgroundColor(PANEL); cape.setPadding(dp(16),dp(20),dp(16),dp(20)); margin(cape,0,4,0,5);
                   cape.setOnClickListener(v->showCapeRoute()); p.addView(cape);
@@ -3102,8 +3105,8 @@ jobs:
                   capeSub.setPadding(dp(8),dp(5),dp(8),dp(14));
                   capeSub.setOnClickListener(v->showCapeRoute()); p.addView(capeSub);
 
-                  TextView title=tv("QuestMate v46 FIXED",30,TEXT,true); p.addView(title);
-                  TextView buildId=tv("v46 FINAL BUILD • reward sections pre-scanned for BLUE/YELLOW titles",14,ACCENT,true); p.addView(buildId);
+                  TextView title=tv("QM v47 NEW - ROUTE + COLOURS",30,TEXT,true); p.addView(title);
+                  TextView buildId=tv("v47 NEW BUILD • reward sections pre-scanned for BLUE/YELLOW titles",14,ACCENT,true); p.addView(buildId);
                   TextView sub=tv(quests.size()+" verified quests • BLUE = Defence XP • YELLOW = Prayer XP",15,MUTED,false); p.addView(sub);
 
                   EditText search=new EditText(this); search.setHint("Search quests..."); search.setHintTextColor(MUTED); search.setTextColor(TEXT);
@@ -3488,7 +3491,7 @@ jobs:
             "Zogre Flesh Eaters","Tai Bwo Wannai Trio","King's Ransom"
           }
           for q in data:
-            # v46 FINAL reward scan: scan the exact reward strings stored in the quest.
+            # v47 FINAL reward scan: scan the exact reward strings stored in the quest.
             rewards=[str(x).strip() for x in (q.get('rewards',[]) or []) if str(x).strip()]
             blob=' | '.join(rewards).lower()
 
@@ -3514,7 +3517,7 @@ jobs:
               'defenceXpReward':q['defenceReward'],
               'prayerXpReward':q['prayerReward'],
               'titleColour':q['titleColour'],
-              'detectedFrom':'v46 direct scan of final Quest Rewards section'
+              'detectedFrom':'v47 direct scan of final Quest Rewards section'
             }
 
           DB.write_text(json.dumps(data,ensure_ascii=False,separators=(',',':')),encoding='utf-8')
@@ -3620,13 +3623,15 @@ jobs:
 
       - name: Build debug APK
         working-directory: questmate-complete
-        run: gradle :app:assembleDebug --no-daemon --stacktrace
+        run: |
+          rm -rf app/build
+          gradle :app:assembleDebug --no-daemon --stacktrace
 
       - name: Verify APK exists
         run: |
           test -f questmate-complete/app/build/outputs/apk/debug/app-debug.apk
-          cp questmate-complete/app/build/outputs/apk/debug/app-debug.apk questmate-complete/app/build/outputs/apk/debug/QuestMate-v46-INSTALL-THIS-ROUTE-COLOURS.apk
-          ls -lh questmate-complete/app/build/outputs/apk/debug/QuestMate-v46-INSTALL-THIS-ROUTE-COLOURS.apk
+          cp questmate-complete/app/build/outputs/apk/debug/app-debug.apk questmate-complete/app/build/outputs/apk/debug/INSTALL-THIS-QM-v47-ROUTE-COLOURS.apk
+          ls -lh questmate-complete/app/build/outputs/apk/debug/INSTALL-THIS-QM-v47-ROUTE-COLOURS.apk
 
       - name: Verify walkthrough button and reward-colour UI
         shell: bash
@@ -3639,10 +3644,14 @@ jobs:
           test -f "$SRC"
           echo "Validating Android source: $SRC"
           grep -F 'QUEST CAPE: MOST EFFICIENT FULL WALKTHROUGH' "$SRC"
+          grep -F 'YOU ARE USING QM v47 NEW' "$SRC"
+          grep -F 'QM v47 NEW - ROUTE + COLOURS' "$SRC"
+          grep -F 'actualRewardColour' "$SRC"
+          grep -F 'titleColour' "$SRC"
           grep -F 'actualDefenceXpReward' "$SRC"
           grep -F 'actualPrayerXpReward' "$SRC"
           grep -F 'actualRewardColour' "$SRC"
-          grep -F 'QuestMate v46 FIXED' "$SRC"
+          grep -F 'QM v47 NEW - ROUTE + COLOURS' "$SRC"
           grep -F 'Reward colours:' "$SRC"
           grep -F "A Soul's Bane" "$SRC"
           grep -F 'explicitDefenceRewardQuest' "$SRC"
@@ -3651,16 +3660,16 @@ jobs:
           grep -F 'DEFENCE_BLUE' "$SRC"
           echo 'Walkthrough button and reward title colour logic verified.'
 
-      - name: Upload QuestMate v46 FIXED APK
+      - name: Upload QM v47 NEW - ROUTE + COLOURS APK
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v46-Final-Reward-Scan-Quest-Cape
-          path: questmate-complete/app/build/outputs/apk/debug/QuestMate-v46-INSTALL-THIS-ROUTE-COLOURS.apk
+          name: QuestMate-v47-NEW-ROUTE-COLOURS
+          path: questmate-complete/app/build/outputs/apk/debug/INSTALL-THIS-QM-v47-ROUTE-COLOURS.apk
 
       - name: Upload v44 guide audit
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v46-Guide-Audit
+          name: QuestMate-v47-Guide-Audit
           path: |
             questmate-complete/guide-audit.csv
             questmate-complete/guide-build-report.txt
