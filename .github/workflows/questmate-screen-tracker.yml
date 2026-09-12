@@ -1,4 +1,4 @@
-name: Build QuestMate Complete - Fully Expanded Walkthroughs v15
+name: Build QuestMate Complete - Canonical All-In-One Walkthroughs v16
 
 on:
   workflow_dispatch:
@@ -85,7 +85,7 @@ jobs:
                   applicationId 'com.questmate.complete'
                   minSdk 26
                   targetSdk 35
-                  versionCode 15
+                  versionCode 16
                   versionName '15.0-fully-expanded-no-subguides'
               }
           }
@@ -2003,26 +2003,69 @@ jobs:
               blob=reward_blob(q)
               return bool(re.search(r'\bquest\s+points?\b|\bqp\b', blob, re.I))
 
-          def is_complete_main_quest(q):
-              # Strict v13 gate: only real main quests with a useful walkthrough and real rewards.
-              # Requiring a Quest Point reward deliberately excludes miniquests, subpages,
-              # categories, guides, achievement pages and other non-quest scraper entries.
-              return (len(q.get('steps',[])) >= 3 and
-                      quality(q.get('steps',[])) >= 45 and
-                      has_real_reward(q) and
-                      has_quest_point_reward(q))
+          def canonical_quest_titles():
+              # Quest membership comes from the official OSRS Quests/List tables, not from
+              # rewards parsing. This avoids the v15 bug where a temporary reward-parser
+              # failure filtered almost the entire app down to one quest.
+              markup=wiki_parse('Quests/List')
+              soup=safe_soup(markup)
+              if soup is None:
+                  raise RuntimeError('Could not load the official OSRS Quests/List page.')
+              wanted={"free-to-play quests","members' quests","members quests"}
+              titles=[]; active=False
+              for node in soup.find_all(['h2','table']):
+                  if node.name=='h2':
+                      label=clean(node.get_text(' ',strip=True)).lower()
+                      active=label in wanted
+                      if titles and label.startswith(('miniquest','quest classifications','see also')):
+                          active=False
+                      continue
+                  if node.name!='table' or not active:
+                      continue
+                  for tr in node.find_all('tr'):
+                      cells=tr.find_all(['td','th'],recursive=False)
+                      if len(cells)<2: continue
+                      name_cell=cells[1]
+                      link=name_cell.find('a',href=True)
+                      title=clean(link.get('title') if link and link.get('title') else name_cell.get_text(' ',strip=True))
+                      if not title or title.lower() in ('name','quest'): continue
+                      if title.startswith(('File:','Category:','Template:')): continue
+                      titles.append(title)
+              titles=dedupe(titles)
+              if len(titles)<150:
+                  raise RuntimeError(f'Official OSRS quest list only returned {len(titles)} quests; refusing to build a partial app.')
+              return titles
 
-          data=json.loads(SRC.read_text(encoding='utf-8'))
+          def title_key(title):
+              return re.sub(r'[^a-z0-9]','',clean(title).lower())
+
+          def seed_index():
+              raw=json.loads(SRC.read_text(encoding='utf-8'))
+              out={}
+              for q in raw:
+                  name=NAME_FIX.get(clean(q.get('name','')),clean(q.get('name','')))
+                  k=title_key(name)
+                  if k and k not in out: out[k]=q
+              return out
+
+          def is_complete_main_quest(q):
+              # Canonical membership already proves this is a real main quest. Do not use
+              # reward parsing as a membership filter; rewards can temporarily fail to parse.
+              return len(q.get('steps',[])) >= 3 and quality(q.get('steps',[])) >= 45
+
+          seeds=seed_index()
+          titles=canonical_quest_titles()
           rebuilt=[]; audit=[]
           counts={'wiki':0,'runelite':0,'seed':0,'weak':0,'missing_rewards':0}
 
-          for idx,q0 in enumerate(data,1):
+          for idx,title in enumerate(titles,1):
+              q0=seeds.get(title_key(title),{})
               q=dict(q0)
-              title=NAME_FIX.get(q.get('name',''),q.get('name','')).strip()
               q['name']=title
               q.pop('wikiUrl',None); q.pop('source',None)
               canonical,quick,full=fetch_wiki(title)
-              if canonical: q['name']=canonical
+              # Keep the exact official Quests/List title as the app heading. fetch_wiki is
+              # used only for walkthrough content, never to create extra/non-quest entries.
 
               quick_steps=strip_generic_steps(parse_walkthrough(quick) if quick else [])
               full_steps=strip_generic_steps(parse_walkthrough(full) if full else [])
@@ -2096,7 +2139,7 @@ jobs:
                   rebuilt.append(q)
               else:
                   print(f'Filtered non-quest/incomplete entry: {q["name"]} | steps={len(q["steps"])} score={score} rewards={len(q["rewards"])}')
-              if idx%20==0: print(f'Processed {idx}/{len(data)} quests...')
+              if idx%20==0: print(f'Processed {idx}/{len(titles)} canonical quests...')
               time.sleep(0.04)
 
           review_rows=[r for r in audit if r[-1]!='OK']
@@ -2116,7 +2159,7 @@ jobs:
               f'Embedded seed fallbacks: {counts["seed"]}\n'
               f'Guides flagged for manual review: {counts["weak"]}\n'
               f'Entries missing parsed rewards: {counts["missing_rewards"]}\n'
-              'v15 selects the most detailed available ordered walkthrough and recursively expands named sub-guides into the main quest walkthrough for every quest. No Do-X-steps shortcut is permitted.\n'
+              'v16 uses the official OSRS Quests/List as the only quest membership source, then selects the most detailed available ordered walkthrough and recursively expands named sub-guides into the main quest walkthrough for every quest. No Do-X-steps shortcut is permitted.\n'
               'Defence XP quests are marked blue; Prayer XP quests are marked yellow. See guide-audit.csv for filtered entries.\n'
               'No external wiki links are stored in quests.json.\n', encoding='utf-8')
           print(REPORT.read_text())
@@ -2357,7 +2400,7 @@ jobs:
           import json,re
           p='questmate-complete/app/src/main/assets/quests.json'
           d=json.load(open(p,encoding='utf-8'))
-          assert len(d) >= 150, f'Expected a large quests-only database, found {len(d)}' # strict filtering may remove entries whose live guide/reward data failed
+          assert len(d) >= 150, f'Expected the canonical OSRS quest database, found {len(d)}'
           raw=open(p,encoding='utf-8').read().lower()
           assert 'oldschool.runescape.wiki' not in raw
           assert 'wikiurl' not in raw
@@ -2404,7 +2447,7 @@ jobs:
       - name: Upload QuestMate Complete APK
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v15-Fully-Expanded-All-Quest-Walkthroughs
+          name: QuestMate-v16-Canonical-All-In-One-Walkthroughs
           path: questmate-complete/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
