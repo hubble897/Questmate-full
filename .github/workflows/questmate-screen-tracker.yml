@@ -1,4 +1,4 @@
-name: Build QuestMate Complete - Java Build Fix v25
+name: Build QuestMate Complete - Global Detail Audit v26
 
 on:
   workflow_dispatch:
@@ -1300,6 +1300,7 @@ jobs:
 
           cat > /tmp/enrich_quests.py <<'PYEOF'
           import json, re, time, html, csv
+          from difflib import SequenceMatcher
           from pathlib import Path
           import requests
           from bs4 import BeautifulSoup, Tag
@@ -1320,7 +1321,31 @@ jobs:
           SUBGUIDE = re.compile(r"(?i)^\s*(?:do|complete|follow|perform|finish|continue(?: with)?|work through)\s+(?:the\s+)?(.+?)\s+(?:steps?|section|part|route|sub-?guide)\s*[.!]?\s*$")
           VAGUE = re.compile(r"(?i)^\s*(?:solve|complete|finish|do|perform|follow|continue|defeat)\s+(?:the\s+)?(?:[a-z0-9' -]+\s+)?(?:puzzle|section|part|route|fight|boss|trial|challenge|steps?|sub-?guide)\s*[.!]?\s*$")
           GENERIC = re.compile(r'(?i)^\s*(?:do|complete|perform|finish|continue)\s+(?:the\s+)?(?:next\s+)?step\s*\.?\s*$|^\s*solve\s+(?:the\s+)?puzzle\s*\.?\s*$')
+          TERSE_ACTION = re.compile(r"(?i)^\s*(?:find(?:ing)?|locate|return|go|travel|head|talk|speak|meet|bring|get|obtain|collect|enter|leave|defeat|kill|fight|solve|complete|finish|use|take|make|craft|smith|mine|search|inspect|read|climb|cross|board|open|unlock)\b")
           SPACE = re.compile(r'\s+')
+
+          def is_terse_fragment(text):
+              """Catch heading-like or placeholder-like micro steps such as
+              'Find the portrait', 'Finding an Imcando', or 'Return the sword'.
+              Real detailed instructions normally contain more than four words or
+              include concrete route/dialogue/item information."""
+              t=clean(text)
+              if not t or not TERSE_ACTION.search(t):
+                  return False
+              words=re.findall(r"[A-Za-z0-9']+", t)
+              return len(words) <= 4
+
+          def content_words(text):
+              stop={'the','a','an','to','of','and','or','with','from','in','on','at','for','then','your','you','this','that','it','back'}
+              out=[]
+              for w in re.findall(r"[A-Za-z0-9']+", clean(text).lower()):
+                  if w in stop: continue
+                  # Tiny stemming is enough to match finding/find and returning/return.
+                  if w.endswith('ing') and len(w)>5: w=w[:-3]
+                  elif w.endswith('ed') and len(w)>4: w=w[:-2]
+                  elif w.endswith('s') and len(w)>4: w=w[:-1]
+                  out.append(w)
+              return set(out)
           ACTION = re.compile(r'(?i)\b(talk|speak|go|travel|walk|run|enter|leave|climb|use|take|pick|collect|give|return|kill|fight|search|open|close|pull|push|operate|equip|wear|buy|bring|head|follow|cross|board|teleport|inspect|read|mine|cut|light|cook|make|place|unlock|drink|cast|pray|dig|craft|smith|choose|select|watch|wait)\b')
 
           NAME_FIX = {
@@ -1534,11 +1559,19 @@ jobs:
                   if got==wanted:
                       chosen=h; break
               if chosen is None:
+                  best=None; best_ratio=0.0
                   for h in headings:
                       got=_norm_label(h.get_text(' ',strip=True))
                       if wanted in got or got in wanted:
                           if min(len(got),len(wanted)) >= 4:
                               chosen=h; break
+                      # Handle wording changes such as 'Find the portrait' vs
+                      # 'Finding the portrait' without guessing unrelated sections.
+                      ratio=SequenceMatcher(None,wanted,got).ratio() if got else 0.0
+                      if ratio>best_ratio:
+                          best_ratio=ratio; best=h
+                  if chosen is None and best is not None and best_ratio>=0.72:
+                      chosen=best
               if chosen is None: return []
               level=int(chosen.name[1]); section=clean(chosen.get_text(' ',strip=True)) or label
               out=[]; seen=set()
@@ -1607,6 +1640,22 @@ jobs:
                       if expanded:
                           out.extend(expanded); continue
                       out.append(st); continue
+                  if not m and is_terse_fragment(txt):
+                      # Short labels are often section headings leaked into the step list.
+                      # Try to expand both the text itself and its section heading into the
+                      # real Wiki instructions before allowing the fragment to survive.
+                      expanded=[]
+                      labels=[txt, clean(st.get('section',''))]
+                      for label_try in labels:
+                          if not label_try: continue
+                          for markup in (full_markup,quick_markup):
+                              expanded=extract_named_section(markup,label_try)
+                              expanded=[x for x in expanded if clean(x.get('text','')).lower()!=txt.lower()]
+                              if expanded: break
+                          if expanded: break
+                      if expanded:
+                          out.extend(expanded); continue
+                      out.append(st); continue
                   if not m:
                       out.append(st); continue
                   label=clean(m.group(1)).rstrip(' .:;-')
@@ -1633,17 +1682,21 @@ jobs:
               return out
 
           def remove_redundant_summary_shortcuts(steps):
-              """Remove vague summary rows only when detailed sibling steps exist
-              in the same section. This does not invent or omit required actions."""
+              """Remove heading-like summary rows only when their information is already
+              present in a longer concrete instruction. This catches trailing leftovers such
+              as 'Finding an Imcando', 'Find the portrait', and 'Return the sword' globally,
+              while preserving unique required actions."""
               steps=list(steps or [])
               concrete_by_section={}
+              concrete=[]
               for st in steps:
                   sec=clean(st.get('section','')).casefold()
                   txt=clean(st.get('text',''))
                   if not txt:
                       continue
-                  if not SUBGUIDE.match(txt) and not VAGUE.match(txt) and not BAD.search(txt):
+                  if not SUBGUIDE.match(txt) and not VAGUE.match(txt) and not BAD.search(txt) and not is_terse_fragment(txt):
                       concrete_by_section[sec]=concrete_by_section.get(sec,0)+1
+                      concrete.append((txt,content_words(txt)))
 
               out=[]
               for st in steps:
@@ -1651,6 +1704,19 @@ jobs:
                   txt=clean(st.get('text',''))
                   if (SUBGUIDE.match(txt) or VAGUE.match(txt)) and concrete_by_section.get(sec,0)>0:
                       continue
+                  if is_terse_fragment(txt):
+                      keys=content_words(txt)
+                      # Remove only when a longer detailed instruction demonstrably covers
+                      # the same subject/action; otherwise leave it for the final audit so
+                      # the build cannot silently hide a missing quest action.
+                      covered=False
+                      for other,other_keys in concrete:
+                          if len(other) < 35: continue
+                          overlap=keys & other_keys
+                          if keys and (len(overlap)>=max(1,len(keys)-1) or (len(keys)<=2 and overlap)):
+                              covered=True; break
+                      if covered:
+                          continue
                   out.append(st)
               return out
 
@@ -1734,6 +1800,7 @@ jobs:
               # vague 'solve/complete the puzzle/boss' shortcut. Detailed Wiki sources
               # should beat terse helper summaries whenever available.
               score -= 1000 * sum(1 for x in cleaned if SUBGUIDE.match(clean(x.get('text',''))) or VAGUE.match(clean(x.get('text',''))))
+              score -= 250 * sum(1 for x in cleaned if is_terse_fragment(clean(x.get('text',''))))
               return score
 
           def strip_generic_steps(steps):
@@ -2352,7 +2419,14 @@ jobs:
                       f"{q['name']}: no complete all-in-one walkthrough candidate remained after "
                       f"expansion and redundant-summary cleanup. Candidate failures: {' | '.join(candidate_errors)}"
                   )
-              source,best=max(viable,key=lambda pair:detail_score(pair[1]))
+              # Prefer the full OSRS Wiki walkthrough whenever it survived expansion.
+              # RuneLite/quick-guide data remain fallbacks, but a short helper summary must
+              # never beat a richer full quest page simply because it contains many headings.
+              full_pair=next((p for p in viable if p[0]=='OSRS Wiki full guide'),None)
+              if full_pair and len(full_pair[1])>=3 and detail_score(full_pair[1])>=45:
+                  source,best=full_pair
+              else:
+                  source,best=max(viable,key=lambda pair:detail_score(pair[1]))
               q['steps']=strip_generic_steps(best)
               if source=='OSRS Wiki': counts['wiki']+=1
               elif source=='RuneLite Quest Helper': counts['runelite']+=1
@@ -2405,9 +2479,9 @@ jobs:
                   q['steps']=remove_redundant_summary_shortcuts(q['steps'])
               except Exception as exc:
                   raise RuntimeError(f"{q['name']}: final all-in-one expansion failed after choosing {source}: {exc}")
-              if any(SUBGUIDE.match(clean(x.get('text',''))) or VAGUE.match(clean(x.get('text',''))) for x in q['steps']):
-                  bad=[clean(x.get('text','')) for x in q['steps'] if SUBGUIDE.match(clean(x.get('text',''))) or VAGUE.match(clean(x.get('text','')))]
-                  raise RuntimeError(f"{q['name']}: vague/sub-guide instruction survived final expansion: {bad[:5]}")
+              if any(SUBGUIDE.match(clean(x.get('text',''))) or VAGUE.match(clean(x.get('text',''))) or is_terse_fragment(clean(x.get('text',''))) for x in q['steps']):
+                  bad=[clean(x.get('text','')) for x in q['steps'] if SUBGUIDE.match(clean(x.get('text',''))) or VAGUE.match(clean(x.get('text',''))) or is_terse_fragment(clean(x.get('text','')))]
+                  raise RuntimeError(f"{q['name']}: vague/terse/sub-guide instruction survived final expansion: {bad[:8]}")
 
               # Never invent a reward placeholder. Missing reward metadata is an audit
               # failure so the APK cannot claim incomplete rewards as real data.
@@ -2444,7 +2518,7 @@ jobs:
           for q in rebuilt:
               for st in q.get('steps',[]):
                   txt=clean(st.get('text',''))
-                  if BAD.search(txt) or SUBGUIDE.match(txt) or VAGUE.match(txt):
+                  if BAD.search(txt) or SUBGUIDE.match(txt) or VAGUE.match(txt) or is_terse_fragment(txt):
                       unresolved.append((q['name'],txt))
           if weak:
               raise RuntimeError('Incomplete walkthroughs remain: '+', '.join(weak[:20]))
@@ -2470,7 +2544,7 @@ jobs:
               f'Embedded seed fallbacks: {counts["seed"]}\n'
               f'Guides flagged for manual review: {counts["weak"]}\n'
               f'Entries missing parsed rewards: {counts["missing_rewards"]}\n'
-              'v18 reconstructs canonical quest membership from OSRS Wiki plus RuneLite Quest Helper and never filters membership by reward text, then selects the most detailed available ordered walkthrough and recursively expands named sub-guides into the main quest walkthrough for every quest. No Do-X-steps shortcut is permitted.\n'
+              'v26 audits every generated quest for placeholders, terse heading fragments, sub-guide shortcuts and duplicate summary rows; it prefers the full OSRS Wiki walkthrough, expands matching sections into concrete actions, and fails the build instead of shipping unresolved filler.\n'
               'Defence XP quests are marked blue; Prayer XP quests are marked yellow. See guide-audit.csv for filtered entries.\n'
               'No external wiki links are stored in quests.json.\n', encoding='utf-8')
           print(REPORT.read_text())
@@ -2692,6 +2766,17 @@ jobs:
           placeholder_re=re.compile(r"(?i)not yet implemented|unknown|relevant npc|relevant location|placeholder|broken step state|\bdo step\b|\bcomplete this step\b|\bfollow the step\b|^\s*(?:do|complete|follow|perform|finish|continue(?: with)?|work through)\s+(?:the\s+)?[^.]{2,100}?\s+(?:steps?|section|part|route|sub-?guide)\s*[.!]?\s*$|^\s*(?:solve|complete|finish|do|perform|follow|continue|defeat)\s+(?:the\s+)?(?:[a-z0-9' -]+\s+)?(?:puzzle|section|part|route|fight|boss|trial|challenge|steps?|sub-?guide)\s*[.!]?\s*$")
           bad_steps=[(q['name'],s.get('text','')) for q in d for s in q.get('steps',[]) if placeholder_re.search(s.get('text',''))]
           assert not bad_steps, f'Placeholder/sub-guide walkthrough text remains: {bad_steps[:10]}'
+          terse_action=re.compile(r"(?i)^\s*(?:find(?:ing)?|locate|return|go|travel|head|talk|speak|meet|bring|get|obtain|collect|enter|leave|defeat|kill|fight|solve|complete|finish|use|take|make|craft|smith|mine|search|inspect|read|climb|cross|board|open|unlock)\b")
+          def terse_fragment(t):
+              words=re.findall(r"[A-Za-z0-9']+", t or '')
+              return bool(terse_action.search(t or '')) and len(words)<=4
+          terse=[(q['name'],s.get('text','')) for q in d for s in q.get('steps',[]) if terse_fragment(s.get('text',''))]
+          assert not terse, f'Terse heading/placeholder-like quest steps remain: {terse[:20]}'
+          knights=[q for q in d if q.get('name')=="The Knight's Sword"]
+          if knights:
+              exact_bad={'finding an imcando','find the portrait','return the sword'}
+              leaked=[s.get('text','').strip().lower().rstrip('.') for s in knights[0].get('steps',[]) if s.get('text','').strip().lower().rstrip('.') in exact_bad]
+              assert not leaked, f"The Knight's Sword still contains summary-heading leftovers: {leaked}"
           forbidden_exact=('do perseriya steps.','do sucellus steps.','do whisperer steps.')
           all_step_text=[s.get('text','').strip().lower() for q in d for s in q.get('steps',[])]
           assert not any(x in all_step_text for x in forbidden_exact), 'Desert Treasure II sub-guide shortcuts survived expansion'
@@ -2716,7 +2801,7 @@ jobs:
       - name: Upload QuestMate Complete APK
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v25-Java-Build-Fix
+          name: QuestMate-v26-Global-Detail-Audit
           path: questmate-complete/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
@@ -2724,7 +2809,7 @@ jobs:
       - name: Upload guide build report
         uses: actions/upload-artifact@v4
         with:
-          name: QuestMate-v25-Guide-Audit
+          name: QuestMate-v26-Guide-Audit
           path: |
             questmate-complete/guide-build-report.txt
             questmate-complete/guide-audit.csv
