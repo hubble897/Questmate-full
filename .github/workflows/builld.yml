@@ -1,0 +1,170 @@
+name: Build QuestMate v83 with native F2P button
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout existing v83 APK
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Verify original v83 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f INSTALL-THIS-QM-v83-VERIFIED-DATA.apk || { echo 'Upload your original APK to the repository root'; exit 1; }
+          echo 'f540301a5a83281104aa07d9b9cf2f90de5a0d3adc67c52e33b90e28df23b702  INSTALL-THIS-QM-v83-VERIFIED-DATA.apk' | sha256sum -c -
+
+      - name: Download verified Apktool
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 -o apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar
+          echo 'dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  apktool.jar' | sha256sum -c -
+          java -jar apktool.jar --version
+
+      - name: Decode original APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -jar apktool.jar d -f INSTALL-THIS-QM-v83-VERIFIED-DATA.apk -o decoded
+
+      - name: Add native multi-quest data and check every quest name
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYDATA'
+          import base64,zlib,json,zipfile,pathlib
+          blob='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'
+          stages=json.loads(zlib.decompress(base64.b64decode(blob)))
+          q={x['name'] for x in json.loads(zipfile.ZipFile('INSTALL-THIS-QM-v83-VERIFIED-DATA.apk').read('assets/quests.json'))}
+          mentioned={quest for stage in stages for task in stage['steps'] for quest in task['quests']}
+          assert mentioned<=q, f'Unknown quests: {mentioned-q}'
+          assert len(stages)==10 and sum(len(x['steps']) for x in stages)==47 and len(mentioned)==24
+          path=pathlib.Path('decoded/assets/f2p_multiroute.json')
+          path.parent.mkdir(exist_ok=True)
+          path.write_text(json.dumps(stages,ensure_ascii=False,separators=(',',':')),encoding='utf-8')
+          print('47 checklist tasks, 10 stages, and 24 valid F2P quest names')
+          PYDATA
+
+      - name: Add F2P button and real native Android screen
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYPATCH'
+          from pathlib import Path
+          import re,xml.etree.ElementTree as ET
+          root=Path('decoded')
+          main_files=list(root.glob('smali*/com/questmate/v83fullcrosscheck/MainActivity.smali'))
+          assert len(main_files)==1, f'Expected original main class, got {main_files}'
+          main=main_files[0]
+          s=main.read_text()
+          MAIN='Lcom/questmate/v83fullcrosscheck/MainActivity;'
+          # Append new native-screen button after construction of original home layout.
+          show=re.search(r'(?ms)^\.method\s+[^\n]*\s+showList\(\)V\s*$.*?^\.end method\s*$',s)
+          assert show,'Original QuestMate home method showList() not found'
+          method=show.group(0)
+          needle=re.compile(r'(\s+invoke-direct(?:/range)?\s+\{[^}]+\},\s+'+re.escape(MAIN)+r'->page\(\)Landroid/widget/LinearLayout;\s*\n\s*move-result-object\s+(v\d+))')
+          m=needle.search(method)
+          assert m,'Could not locate root LinearLayout on v83 main screen'
+          reg=m.group(2)
+          # Smali correctness: create button only on the home page.
+          method=method[:m.end()]+'\n    invoke-static {'+reg+'}, '+MAIN+'->addF2PButton(Landroid/widget/LinearLayout;)V'+method[m.end():]
+          s=s[:show.start()]+method+s[show.end():]
+          # The quest chips return to the original in-app quest detail implementation.
+          on=re.search(r'(?ms)^\.method[^\n]*\s+onCreate\(Landroid/os/Bundle;\)V\s*$.*?^\.end method',s)
+          assert on,'Original onCreate missing'
+          onm=on.group(0)
+          pos=onm.rfind('return-void')
+          assert pos>=0
+          onm=onm[:pos]+'invoke-direct {p0}, '+MAIN+'->maybeOpenF2PQuest()V\n    '+onm[pos:]
+          s=s[:on.start()]+onm+s[on.end():]
+          s+='\n.method private static addF2PButton(Landroid/widget/LinearLayout;)V\n    .locals 3\n    invoke-virtual {p0}, Landroid/widget/LinearLayout;->getContext()Landroid/content/Context;\n    move-result-object v1\n    new-instance v0, Landroid/widget/Button;\n    invoke-direct {v0, v1}, Landroid/widget/Button;-><init>(Landroid/content/Context;)V\n    const-string v2, "F2P Quest Efficiency (Multi-Quest)"\n    invoke-virtual {v0, v2}, Landroid/widget/Button;->setText(Ljava/lang/CharSequence;)V\n    const v2, -0xc3a775\n    invoke-virtual {v0, v2}, Landroid/widget/Button;->setBackgroundColor(I)V\n    const/4 v2, -0x1\n    invoke-virtual {v0, v2}, Landroid/widget/Button;->setTextColor(I)V\n    check-cast v1, Lcom/questmate/v83fullcrosscheck/MainActivity;\n    new-instance v2, Lcom/questmate/v83fullcrosscheck/F2PButtonClick;\n    invoke-direct {v2, v1}, Lcom/questmate/v83fullcrosscheck/F2PButtonClick;-><init>(Lcom/questmate/v83fullcrosscheck/MainActivity;)V\n    invoke-virtual {v0, v2}, Landroid/widget/Button;->setOnClickListener(Landroid/view/View$OnClickListener;)V\n    invoke-virtual {p0, v0}, Landroid/widget/LinearLayout;->addView(Landroid/view/View;)V\n    return-void\n.end method\n.method private maybeOpenF2PQuest()V\n    .locals 2\n    invoke-virtual {p0}, Landroid/app/Activity;->getIntent()Landroid/content/Intent;\n    move-result-object v0\n    if-eqz v0, :done\n    const-string v1, "qm_f2p_quest"\n    invoke-virtual {v0, v1}, Landroid/content/Intent;->getStringExtra(Ljava/lang/String;)Ljava/lang/String;\n    move-result-object v0\n    if-eqz v0, :done\n    invoke-direct {p0, v0}, Lcom/questmate/v83fullcrosscheck/MainActivity;->findQuest(Ljava/lang/String;)Lcom/questmate/v83fullcrosscheck/MainActivity$Quest;\n    move-result-object v0\n    if-eqz v0, :done\n    invoke-direct {p0, v0}, Lcom/questmate/v83fullcrosscheck/MainActivity;->showQuest(Lcom/questmate/v83fullcrosscheck/MainActivity$Quest;)V\n    :done\n    return-void\n.end method\n'
+          main.write_text(s)
+          package_path=main.parent
+          (package_path/'F2PButtonClick.smali').write_text('.class public final Lcom/questmate/v83fullcrosscheck/F2PButtonClick;\n.super Ljava/lang/Object;\n.implements Landroid/view/View$OnClickListener;\n.field private final owner:Lcom/questmate/v83fullcrosscheck/MainActivity;\n.method public constructor <init>(Lcom/questmate/v83fullcrosscheck/MainActivity;)V\n    .locals 0\n    invoke-direct {p0}, Ljava/lang/Object;-><init>()V\n    iput-object p1, p0, Lcom/questmate/v83fullcrosscheck/F2PButtonClick;->owner:Lcom/questmate/v83fullcrosscheck/MainActivity;\n    return-void\n.end method\n.method public onClick(Landroid/view/View;)V\n    .locals 3\n    iget-object v0, p0, Lcom/questmate/v83fullcrosscheck/F2PButtonClick;->owner:Lcom/questmate/v83fullcrosscheck/MainActivity;\n    new-instance v1, Landroid/content/Intent;\n    const-class v2, Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;\n    invoke-direct {v1, v0, v2}, Landroid/content/Intent;-><init>(Landroid/content/Context;Ljava/lang/Class;)V\n    invoke-virtual {v0, v1}, Landroid/app/Activity;->startActivity(Landroid/content/Intent;)V\n    return-void\n.end method\n')
+          (package_path/'F2PNativeActivity.smali').write_text('.class public Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;\n.super Landroid/app/Activity;\n.field private prefs:Landroid/content/SharedPreferences;\n.field private stack:Landroid/widget/LinearLayout;\n.field private taskCounter:I\n.method public constructor <init>()V\n    .locals 0\n    invoke-direct {p0}, Landroid/app/Activity;-><init>()V\n    return-void\n.end method\n.method protected onCreate(Landroid/os/Bundle;)V\n    .locals 6\n    invoke-super {p0, p1}, Landroid/app/Activity;->onCreate(Landroid/os/Bundle;)V\n    const-string v0, "F2P Multi-Quest Guide"\n    invoke-virtual {p0, v0}, Landroid/app/Activity;->setTitle(Ljava/lang/CharSequence;)V\n    const-string v0, "qm_f2p_checklist_native_v1"\n    const/4 v1, 0x0\n    invoke-virtual {p0, v0, v1}, Landroid/content/Context;->getSharedPreferences(Ljava/lang/String;I)Landroid/content/SharedPreferences;\n    move-result-object v0\n    iput-object v0, p0, Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;->prefs:Landroid/content/SharedPreferences;\n    new-instance v0, Landroid/widget/ScrollView;\n    invoke-direct {v0, p0}, Landroid/widget/ScrollView;-><init>(Landroid/content/Context;)V\n    new-instance v1, Landroid/widget/LinearLayout;\n    invoke-direct {v1, p0}, Landroid/widget/LinearLayout;-><init>(Landroid/content/Context;)V\n    const/4 v2, 0x1\n    invoke-virtual {v1, v2}, Landroid/widget/LinearLayout;->setOrientation(I)V\n    const v2, -0xf4ead9\n    invoke-virtual {v1, v2}, Landroid/view/View;->setBackgroundColor(I)V\n    const/16 v2, 0xc\n    invoke-virtual {v1, v2, v2, v2, v2}, Landroid/view/View;->setPadding(IIII)V\n    invoke-virtual {v0, v1}, Landroid/widget/ScrollView;->addView(Landroid/view/View;)V\n    iput-object v1, p0, Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;->stack:Landroid/widget/LinearLayout;\n    invoke-virtual {p0, v0}, Landroid/app/Activity;->setContentView(Landroid/view/View;)V\n    const-string v2, "F2P QUEST EFFICIENCY • MULTI-QUEST"\n    const/16 v3, 0x16\n    const v4, -0x312119\n    invoke-direct {p0, v2, v3, v4}, Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;->addText(Ljava/lang/String;II)V\n    const-string v2, "47 tasks • 10 stages • 24 quests. Tick tasks as you finish them. Tap any quest name to open its original QuestMate walkthrough."\n    const/16 v3, 0xe\n    const/4 v4, -0x1\n    invoke-direct {p0, v2, v3, v4}, Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;->addText(Ljava/lang/String;II)V\n    invoke-direct {p0}, Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;->readStages()Lorg/json/JSONArray;\n    move-result-object v2\n    const/4 v3, 0x0\n    :stage_loop\n    invoke-virtual {v2}, Lorg/json/JSONArray;->length()I\n    move-result v4\n    if-ge v3, v4, :end\n    invoke-virtual {v2, v3}, Lorg/json/JSONArray;->getJSONObject(I)Lorg/json/JSONObject;\n    move-result-object v5\n    invoke-direct {p0, v5}, Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;->addStage(Lorg/json/JSONObject;)V\n    add-int/lit8 v3, v3, 0x1\n    goto :stage_loop\n    :end\n    return-void\n.end method\n.method private readStages()Lorg/json/JSONArray;\n    .locals 7\n    invoke-virtual {p0}, Landroid/content/Context;->getAssets()Landroid/content/res/AssetManager;\n    move-result-object v0\n    const-string v1, "f2p_multiroute.json"\n    invoke-virtual {v0, v1}, Landroid/content/res/AssetManager;->open(Ljava/lang/String;)Ljava/io/InputStream;\n    move-result-object v1\n    new-instance v2, Ljava/io/ByteArrayOutputStream;\n    invoke-direct {v2}, Ljava/io/ByteArrayOutputStream;-><init>()V\n    const/16 v3, 0x1000\n    new-array v3, v3, [B\n    :read_loop\n    invoke-virtual {v1, v3}, Ljava/io/InputStream;->read([B)I\n    move-result v4\n    if-ltz v4, :read_done\n    const/4 v5, 0x0\n    invoke-virtual {v2, v3, v5, v4}, Ljava/io/ByteArrayOutputStream;->write([BII)V\n    goto :read_loop\n    :read_done\n    invoke-virtual {v1}, Ljava/io/InputStream;->close()V\n    new-instance v0, Ljava/lang/String;\n    invoke-virtual {v2}, Ljava/io/ByteArrayOutputStream;->toByteArray()[B\n    move-result-object v5\n    const-string v6, "UTF-8"\n    invoke-direct {v0, v5, v6}, Ljava/lang/String;-><init>([BLjava/lang/String;)V\n    new-instance v1, Lorg/json/JSONArray;\n    invoke-direct {v1, v0}, Lorg/json/JSONArray;-><init>(Ljava/lang/String;)V\n    return-object v1\n.end method\n.method private addStage(Lorg/json/JSONObject;)V\n    .locals 5\n    const-string v0, "title"\n    invoke-virtual {p1, v0}, Lorg/json/JSONObject;->getString(Ljava/lang/String;)Ljava/lang/String;\n    move-result-object v0\n    const/16 v1, 0x13\n    const v2, -0x312119\n    invoke-direct {p0, v0, v1, v2}, Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;->addText(Ljava/lang/String;II)V\n    const-string v0, "area"\n    invoke-virtual {p1, v0}, Lorg/json/JSONObject;->getString(Ljava/lang/String;)Ljava/lang/String;\n    move-result-object v0\n    const/16 v1, 0x10\n    const v2, -0x796849\n    invoke-direct {p0, v0, v1, v2}, Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;->addText(Ljava/lang/String;II)V\n    const-string v0, "intro"\n    invoke-virtual {p1, v0}, Lorg/json/JSONObject;->getString(Ljava/lang/String;)Ljava/lang/String;\n    move-result-object v0\n    const/16 v1, 0xe\n    const/4 v2, -0x1\n    invoke-direct {p0, v0, v1, v2}, Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;->addText(Ljava/lang/String;II)V\n    const-string v0, "steps"\n    invoke-virtual {p1, v0}, Lorg/json/JSONObject;->getJSONArray(Ljava/lang/String;)Lorg/json/JSONArray;\n    move-result-object v0\n    const/4 v1, 0x0\n    :task_loop\n    invoke-virtual {v0}, Lorg/json/JSONArray;->length()I\n    move-result v2\n    if-ge v1, v2, :end\n    invoke-virtual {v0, v1}, Lorg/json/JSONArray;->getJSONObject(I)Lorg/json/JSONObject;\n    move-result-object v2\n    const-string v3, "text"\n    invoke-virtual {v2, v3}, Lorg/json/JSONObject;->getString(Ljava/lang/String;)Ljava/lang/String;\n    move-result-object v3\n    const-string v4, "quests"\n    invoke-virtual {v2, v4}, Lorg/json/JSONObject;->getJSONArray(Ljava/lang/String;)Lorg/json/JSONArray;\n    move-result-object v4\n    invoke-direct {p0, v3, v4}, Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;->addTask(Ljava/lang/String;Lorg/json/JSONArray;)V\n    add-int/lit8 v1, v1, 0x1\n    goto :task_loop\n    :end\n    return-void\n.end method\n.method private addText(Ljava/lang/String;II)V\n    .locals 3\n    new-instance v0, Landroid/widget/TextView;\n    invoke-direct {v0, p0}, Landroid/widget/TextView;-><init>(Landroid/content/Context;)V\n    invoke-virtual {v0, p1}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V\n    const/4 v1, 0x2\n    int-to-float v2, p2\n    invoke-virtual {v0, v1, v2}, Landroid/widget/TextView;->setTextSize(IF)V\n    invoke-virtual {v0, p3}, Landroid/widget/TextView;->setTextColor(I)V\n    const/16 v1, 0xa\n    invoke-virtual {v0, v1, v1, v1, v1}, Landroid/view/View;->setPadding(IIII)V\n    iget-object v2, p0, Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;->stack:Landroid/widget/LinearLayout;\n    invoke-virtual {v2, v0}, Landroid/widget/LinearLayout;->addView(Landroid/view/View;)V\n    return-void\n.end method\n.method private addTask(Ljava/lang/String;Lorg/json/JSONArray;)V\n    .locals 8\n    new-instance v0, Landroid/widget/CheckBox;\n    invoke-direct {v0, p0}, Landroid/widget/CheckBox;-><init>(Landroid/content/Context;)V\n    invoke-virtual {v0, p1}, Landroid/widget/CheckBox;->setText(Ljava/lang/CharSequence;)V\n    const/4 v1, -0x1\n    invoke-virtual {v0, v1}, Landroid/widget/CheckBox;->setTextColor(I)V\n    const/high16 v1, 0x41800000\n    invoke-virtual {v0, v1}, Landroid/widget/CheckBox;->setTextSize(F)V\n    iget v1, p0, Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;->taskCounter:I\n    add-int/lit8 v2, v1, 0x1\n    iput v2, p0, Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;->taskCounter:I\n    invoke-static {v1}, Ljava/lang/String;->valueOf(I)Ljava/lang/String;\n    move-result-object v2\n    iget-object v3, p0, Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;->prefs:Landroid/content/SharedPreferences;\n    const/4 v4, 0x0\n    invoke-interface {v3, v2, v4}, Landroid/content/SharedPreferences;->getBoolean(Ljava/lang/String;Z)Z\n    move-result v4\n    invoke-virtual {v0, v4}, Landroid/widget/CheckBox;->setChecked(Z)V\n    new-instance v5, Lcom/questmate/v83fullcrosscheck/F2PCheckClick;\n    invoke-direct {v5, p0, v2}, Lcom/questmate/v83fullcrosscheck/F2PCheckClick;-><init>(Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;Ljava/lang/String;)V\n    invoke-virtual {v0, v5}, Landroid/widget/CheckBox;->setOnCheckedChangeListener(Landroid/widget/CompoundButton$OnCheckedChangeListener;)V\n    iget-object v6, p0, Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;->stack:Landroid/widget/LinearLayout;\n    invoke-virtual {v6, v0}, Landroid/widget/LinearLayout;->addView(Landroid/view/View;)V\n    const/4 v1, 0x0\n    :quest_loop\n    invoke-virtual {p2}, Lorg/json/JSONArray;->length()I\n    move-result v2\n    if-ge v1, v2, :done\n    invoke-virtual {p2, v1}, Lorg/json/JSONArray;->getString(I)Ljava/lang/String;\n    move-result-object v3\n    new-instance v4, Landroid/widget/Button;\n    invoke-direct {v4, p0}, Landroid/widget/Button;-><init>(Landroid/content/Context;)V\n    new-instance v5, Ljava/lang/StringBuilder;\n    invoke-direct {v5}, Ljava/lang/StringBuilder;-><init>()V\n    const-string v6, "↗ "\n    invoke-virtual {v5, v6}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;\n    invoke-virtual {v5, v3}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;\n    invoke-virtual {v5}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;\n    move-result-object v6\n    invoke-virtual {v4, v6}, Landroid/widget/Button;->setText(Ljava/lang/CharSequence;)V\n    new-instance v5, Lcom/questmate/v83fullcrosscheck/F2PQuestClick;\n    invoke-direct {v5, p0, v3}, Lcom/questmate/v83fullcrosscheck/F2PQuestClick;-><init>(Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;Ljava/lang/String;)V\n    invoke-virtual {v4, v5}, Landroid/widget/Button;->setOnClickListener(Landroid/view/View$OnClickListener;)V\n    iget-object v7, p0, Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;->stack:Landroid/widget/LinearLayout;\n    invoke-virtual {v7, v4}, Landroid/widget/LinearLayout;->addView(Landroid/view/View;)V\n    add-int/lit8 v1, v1, 0x1\n    goto :quest_loop\n    :done\n    return-void\n.end method\n.method public saveProgress(Ljava/lang/String;Z)V\n    .locals 1\n    iget-object v0, p0, Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;->prefs:Landroid/content/SharedPreferences;\n    invoke-interface {v0}, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;\n    move-result-object v0\n    invoke-interface {v0, p1, p2}, Landroid/content/SharedPreferences$Editor;->putBoolean(Ljava/lang/String;Z)Landroid/content/SharedPreferences$Editor;\n    move-result-object v0\n    invoke-interface {v0}, Landroid/content/SharedPreferences$Editor;->apply()V\n    return-void\n.end method\n.method public launchQuest(Ljava/lang/String;)V\n    .locals 2\n    new-instance v0, Landroid/content/Intent;\n    const-class v1, Lcom/questmate/v83fullcrosscheck/MainActivity;\n    invoke-direct {v0, p0, v1}, Landroid/content/Intent;-><init>(Landroid/content/Context;Ljava/lang/Class;)V\n    const-string v1, "qm_f2p_quest"\n    invoke-virtual {v0, v1, p1}, Landroid/content/Intent;->putExtra(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;\n    invoke-virtual {p0, v0}, Landroid/app/Activity;->startActivity(Landroid/content/Intent;)V\n    return-void\n.end method\n')
+          (package_path/'F2PCheckClick.smali').write_text('.class public final Lcom/questmate/v83fullcrosscheck/F2PCheckClick;\n.super Ljava/lang/Object;\n.implements Landroid/widget/CompoundButton$OnCheckedChangeListener;\n.field private final owner:Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;\n.field private final key:Ljava/lang/String;\n.method public constructor <init>(Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;Ljava/lang/String;)V\n    .locals 0\n    invoke-direct {p0}, Ljava/lang/Object;-><init>()V\n    iput-object p1, p0, Lcom/questmate/v83fullcrosscheck/F2PCheckClick;->owner:Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;\n    iput-object p2, p0, Lcom/questmate/v83fullcrosscheck/F2PCheckClick;->key:Ljava/lang/String;\n    return-void\n.end method\n.method public onCheckedChanged(Landroid/widget/CompoundButton;Z)V\n    .locals 2\n    iget-object v0, p0, Lcom/questmate/v83fullcrosscheck/F2PCheckClick;->owner:Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;\n    iget-object v1, p0, Lcom/questmate/v83fullcrosscheck/F2PCheckClick;->key:Ljava/lang/String;\n    invoke-virtual {v0, v1, p2}, Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;->saveProgress(Ljava/lang/String;Z)V\n    return-void\n.end method\n')
+          (package_path/'F2PQuestClick.smali').write_text('.class public final Lcom/questmate/v83fullcrosscheck/F2PQuestClick;\n.super Ljava/lang/Object;\n.implements Landroid/view/View$OnClickListener;\n.field private final owner:Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;\n.field private final quest:Ljava/lang/String;\n.method public constructor <init>(Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;Ljava/lang/String;)V\n    .locals 0\n    invoke-direct {p0}, Ljava/lang/Object;-><init>()V\n    iput-object p1, p0, Lcom/questmate/v83fullcrosscheck/F2PQuestClick;->owner:Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;\n    iput-object p2, p0, Lcom/questmate/v83fullcrosscheck/F2PQuestClick;->quest:Ljava/lang/String;\n    return-void\n.end method\n.method public onClick(Landroid/view/View;)V\n    .locals 2\n    iget-object v0, p0, Lcom/questmate/v83fullcrosscheck/F2PQuestClick;->owner:Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;\n    iget-object v1, p0, Lcom/questmate/v83fullcrosscheck/F2PQuestClick;->quest:Ljava/lang/String;\n    invoke-virtual {v0, v1}, Lcom/questmate/v83fullcrosscheck/F2PNativeActivity;->launchQuest(Ljava/lang/String;)V\n    return-void\n.end method\n')
+          manifest=root/'AndroidManifest.xml'
+          ns='http://schemas.android.com/apk/res/android'
+          ET.register_namespace('android',ns)
+          tree=ET.parse(manifest)
+          mr=tree.getroot()
+          oldpkg=mr.get('package')
+          assert oldpkg
+          for tag in mr.iter():
+              if tag.tag in ('activity','activity-alias','service','receiver','provider'):
+                  key='{'+ns+'}name'
+                  name=tag.get(key)
+                  if name and name.startswith('.'):
+                      tag.set(key,oldpkg+name)
+          app=mr.find('application')
+          assert app is not None
+          act=ET.SubElement(app,'activity')
+          act.set('{'+ns+'}name','com.questmate.v83fullcrosscheck.F2PNativeActivity')
+          act.set('{'+ns+'}exported','false')
+          act.set('{'+ns+'}label','F2P Quest Efficiency')
+          mr.set('package','com.questmate.v83f2pnative')
+          tree.write(manifest,encoding='utf-8',xml_declaration=True)
+          print('Installed native multiquest activity and main-screen button. Kept original code and assets.')
+
+          PYPATCH
+
+      - name: Recompile original app plus native screen
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -jar apktool.jar b decoded -o unsigned.apk
+          test -s unsigned.apk
+
+      - name: Sign installable Android APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          if [ ! -x "$BT/apksigner" ]; then sdkmanager 'build-tools;35.0.0'; fi
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          keytool -genkeypair -alias qm-native -keyalg RSA -keysize 3072 -validity 7300 -keystore dev-sign.jks -storepass android -keypass android -dname 'CN=QuestMate F2P Native Test, O=QuestMate, C=AU' -noprompt
+          "$BT/zipalign" -f -p 4 unsigned.apk aligned.apk
+          "$BT/apksigner" sign --ks dev-sign.jks --ks-key-alias qm-native --ks-pass pass:android --key-pass pass:android --out QuestMate-v84-F2P-NATIVE.apk aligned.apk
+          "$BT/apksigner" verify --verbose QuestMate-v84-F2P-NATIVE.apk
+
+      - name: Verify unchanged original data and new real screen
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import zipfile,json
+          a=zipfile.ZipFile('INSTALL-THIS-QM-v83-VERIFIED-DATA.apk')
+          b=zipfile.ZipFile('QuestMate-v84-F2P-NATIVE.apk')
+          for path in ('assets/quests.json','assets/cape_route.json','assets/clues.json','assets/ge_items.json'):
+              assert a.read(path)==b.read(path), 'Original content changed: '+path
+              print('Preserved exactly:',path)
+          assert 'assets/f2p_multiroute.json' in b.namelist()
+          assert not any(x.endswith('f2p_route.html') for x in b.namelist())
+          dex=b''.join(b.read(x) for x in b.namelist() if x.endswith('.dex'))
+          for cls in (b'F2PNativeActivity',b'F2PButtonClick',b'F2PCheckClick',b'F2PQuestClick'):
+              assert cls in dex, 'Missing native Android component: '+str(cls)
+          assert b'F2P Quest Efficiency' in dex, 'Home button label missing'
+          print('Built an Android native scrolling checklist and in-app quest buttons, with original data unchanged.')
+          PY
+
+      - name: Upload updated QuestMate APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuestMate-v84-F2P-NATIVE
+          path: QuestMate-v84-F2P-NATIVE.apk
+          if-no-files-found: error
+          retention-days: 30
